@@ -2,7 +2,8 @@
 
 eBPF-based LuaJIT2 CPU flame-graph profiler, written in Rust (user space) and
 C (eBPF kernel side). Produces flame graphs that resolve LuaJIT interpreter
-frames down to **source file:line** and interleave them with native C frames.
+frames down to **source file:line** and, in mixed stacks, interleave them with
+native C frames.
 
 ![Example lua-flame output](docs/example-flamegraph.svg)
 
@@ -109,8 +110,12 @@ HPID=$!
 sudo ./target/release/lua-flame -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
 ```
 
-Open `folded.svg` in a browser; you should see `L:cpu-burn.lua:38` and similar
-Lua source frames.
+You do not need to build LuaJIT with `-g` for Lua stack frames to show up.
+Lua source lines come from LuaJIT's runtime metadata, not DWARF debug info.
+`-g` is only useful if you want more native symbol detail in mixed stacks.
+
+Open `folded.svg` in a browser; you should see multiple `L:cpu-burn.lua:*`
+frames instead of a single hot line.
 
 ## Files
 
