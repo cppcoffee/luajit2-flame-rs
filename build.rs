@@ -1,0 +1,39 @@
+// Build script: compiles the eBPF C program and generates the Rust skeleton.
+use libbpf_cargo::SkeletonBuilder;
+use std::path::PathBuf;
+
+fn main() {
+    let bpf_src = PathBuf::from("bpf/profile.bpf.c");
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let obj_out = PathBuf::from(&out_dir).join("profile.bpf.o");
+    let skel_out = PathBuf::from(&out_dir).join("profile.skel.rs");
+
+    let gc64 = "1"; // x86-64 LuaJIT default
+
+    let clang_args: Vec<String> = vec![
+        "-g".into(),
+        "-O2".into(),
+        "-target".into(),
+        "bpf".into(),
+        "-D__TARGET_ARCH_x86".into(),
+        format!("-DLJ_TARGET_GC64={gc64}"),
+        "-I/usr/include/x86_64-linux-gnu".into(),
+        "-Ibpf".into(),
+    ];
+
+    let mut builder = SkeletonBuilder::new();
+    let result = builder
+        .source(bpf_src.clone())
+        .obj(&obj_out)
+        .clang_args(&clang_args)
+        .build_and_generate(&skel_out);
+
+    if let Err(e) = result {
+        panic!("skeleton generation failed: {e}");
+    }
+
+    println!("cargo:rerun-if-changed={}", bpf_src.display());
+    println!("cargo:rerun-if-changed=bpf/lua_state.h");
+    println!("cargo:rerun-if-changed=bpf/common.h");
+    println!("cargo:rerun-if-changed=build.rs");
+}
