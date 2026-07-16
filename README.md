@@ -6,7 +6,7 @@ frames down to **source file:line** and interleave them with native C frames.
 
 ![Example lua-flame output](docs/example-flamegraph.svg)
 
-The image above is a real `folded.svg` generated from the bundled
+The image above is a real Lua-only `folded.svg` generated from the bundled
 `tests/cpu-burn.lua` workload with the command shown in [Trying it out](#trying-it-out).
 
 ## Architecture
@@ -105,12 +105,12 @@ cc -O2 tests/harness.c -o /tmp/lua-harness \
 /tmp/lua-harness tests/cpu-burn.lua &
 HPID=$!
 
-# profile for 8 seconds
-sudo ./target/release/lua-flame -p $HPID -d 8 -o folded.txt
+# profile Lua land for 8 seconds
+sudo ./target/release/lua-flame -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
 ```
 
 Open `folded.svg` in a browser; you should see `L:cpu-burn.lua:38` and similar
-Lua source frames alongside the LuaJIT interpreter C functions (`lj_BC_*`).
+Lua source frames.
 
 ## Files
 

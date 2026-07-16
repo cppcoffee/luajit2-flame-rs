@@ -272,14 +272,18 @@ fn fold_symbolized_stack(
                 frames.push(name.clone());
             }
         } else if lua_idx < lua_sorted.len() {
-            frames.push(format_lua_frame(&lua_sorted[lua_idx]));
+            if let Some(frame) = format_lua_frame(&lua_sorted[lua_idx]) {
+                frames.push(frame);
+            }
             lua_idx += 1;
         } else if !lua_only {
             frames.push("[unknown]".into());
         }
     }
     while lua_idx < lua_sorted.len() {
-        frames.push(format_lua_frame(&lua_sorted[lua_idx]));
+        if let Some(frame) = format_lua_frame(&lua_sorted[lua_idx]) {
+            frames.push(frame);
+        }
         lua_idx += 1;
     }
     if frames.is_empty() {
@@ -289,19 +293,21 @@ fn fold_symbolized_stack(
     }
 }
 
-fn format_lua_frame(ev: &LuaStackEvent) -> String {
+fn format_lua_frame(ev: &LuaStackEvent) -> Option<String> {
     match ev.r#type {
         FUNC_TYPE_LUA => {
             let chunk = strip_chunkname(&ev.name_str());
             if ev.line > 0 {
-                format!("L:{}:{}", chunk, ev.line)
+                Some(format!("L:{}:{}", chunk, ev.line))
+            } else if !chunk.is_empty() {
+                Some(format!("L:{}", chunk))
             } else {
-                format!("L:{}", chunk)
+                None
             }
         }
-        FUNC_TYPE_C => format!("C:{:#x}", ev.funcp),
-        FUNC_TYPE_F => format!("builtin#{}", ev.line),
-        _ => "[lua-unknown]".into(),
+        FUNC_TYPE_C => Some(format!("C:{:#x}", ev.funcp)),
+        FUNC_TYPE_F => Some(format!("builtin#{}", ev.line)),
+        _ => None,
     }
 }
 
@@ -467,20 +473,31 @@ mod tests {
     fn lua_frame_formatting_handles_known_types() {
         let key = SampleKey::default();
         let lua = lua_event(key, 0, "@/a/b/c.lua", 99);
-        assert_eq!(format_lua_frame(&lua), "L:c.lua:99");
+        assert_eq!(format_lua_frame(&lua).unwrap(), "L:c.lua:99");
 
         let c = LuaStackEvent {
             r#type: FUNC_TYPE_C,
             funcp: 0x1234,
             ..LuaStackEvent::default()
         };
-        assert_eq!(format_lua_frame(&c), "C:0x1234");
+        assert_eq!(format_lua_frame(&c).unwrap(), "C:0x1234");
 
         let builtin = LuaStackEvent {
             r#type: FUNC_TYPE_F,
             line: 7,
             ..LuaStackEvent::default()
         };
-        assert_eq!(format_lua_frame(&builtin), "builtin#7");
+        assert_eq!(format_lua_frame(&builtin).unwrap(), "builtin#7");
+    }
+
+    #[test]
+    fn lua_frame_formatting_drops_empty_lua_frames() {
+        let empty = LuaStackEvent {
+            r#type: FUNC_TYPE_LUA,
+            line: 0,
+            ..LuaStackEvent::default()
+        };
+
+        assert_eq!(format_lua_frame(&empty), None);
     }
 }
