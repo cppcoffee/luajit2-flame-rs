@@ -4,6 +4,11 @@ eBPF-based LuaJIT2 CPU flame-graph profiler, written in Rust (user space) and
 C (eBPF kernel side). Produces flame graphs that resolve LuaJIT interpreter
 frames down to **source file:line** and interleave them with native C frames.
 
+![Example lua-flame output](docs/example-flamegraph.svg)
+
+The image above is a real `folded.svg` generated from the bundled
+`tests/cpu-burn.lua` workload with the command shown in [Trying it out](#trying-it-out).
+
 ## Architecture
 
 ```
@@ -55,8 +60,18 @@ walker to read bytecode PCs:
 jit.off(); jit.flush()
 ```
 
+The only required flag is `-p/--pid`. By default the profiler samples at 49 Hz,
+runs until Ctrl-C, writes folded stacks to `folded.txt`, and writes the flame
+graph to `folded.svg`.
+
 ```sh
-# profile PID 1234 at 99 Hz for 10 seconds, also produce folded.txt + folded.svg
+sudo ./target/release/lua-flame -p 1234
+```
+
+Use `-F/--frequency` and `-d/--duration` when you want to override those
+defaults, for example to take a bounded 99 Hz sample:
+
+```sh
 sudo ./target/release/lua-flame -p 1234 -F 99 -d 10 -o folded.txt
 ```
 
@@ -90,11 +105,11 @@ cc -O2 tests/harness.c -o /tmp/lua-harness \
 /tmp/lua-harness tests/cpu-burn.lua &
 HPID=$!
 
-# profile
-sudo ./target/release/lua-flame -p $HPID -F 99 -d 8 -o folded.txt
+# profile for 8 seconds
+sudo ./target/release/lua-flame -p $HPID -d 8 -o folded.txt
 ```
 
-Open `folded.svg` in a browser; you should see `L:cpu-burn.lua:34` and similar
+Open `folded.svg` in a browser; you should see `L:cpu-burn.lua:38` and similar
 Lua source frames alongside the LuaJIT interpreter C functions (`lj_BC_*`).
 
 ## Files
