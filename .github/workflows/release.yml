@@ -131,6 +131,9 @@ jobs:
             cflags="$cflags -idirafter /usr/include/$multiarch"
           fi
           cflags="$cflags -idirafter /usr/include"
+          if [ "$rust_target" = "aarch64-unknown-linux-musl" ]; then
+            cflags="$cflags -mno-outline-atomics"
+          fi
           echo "${cflags_name}=$cflags" >> "$GITHUB_ENV"
 
       - name: Regenerate architecture BTF header
