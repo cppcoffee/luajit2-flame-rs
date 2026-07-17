@@ -1,77 +1,81 @@
 # lua-flame
 
-eBPF-based LuaJIT2 CPU flame-graph profiler, written in Rust (user space) and
-C (eBPF kernel side). Produces flame graphs that resolve LuaJIT interpreter
-frames down to **source file:line** and, in mixed stacks, interleave them with
-native C frames.
+`lua-flame` is an eBPF-based CPU flame graph profiler for LuaJIT 2.x. It is
+written in Rust for user space and C for the eBPF program, and it can resolve
+LuaJIT interpreter frames down to `source:line` while preserving native C frames
+in mixed stacks.
 
 ![Example lua-flame output](docs/example-flamegraph.svg)
 
-The image above is a representative Lua-only `folded.svg` generated from the
-bundled `tests/cpu-burn.lua` workload shape with the command shown in [Trying
-it out](#trying-it-out).
+The image above is a representative Lua-only flame graph generated from the
+bundled `tests/cpu-burn.lua` workload.
 
-## Architecture
+## Features
 
-```
-target process (nginx / OpenResty / any LuaJIT embedder)
-   │
-   │  uprobe on lua_resume / lua_pcall     → capture lua_State* per tid
-   │  uretprobe on lua_yield                → drop lua_State* per tid
-   │  perf-event (CPU clock) @ N Hz         → on each sample:
-   │      • bpf_get_stack()  → native user-space IPs
-   │      • walk lua_State   → bytecode PC → source line for every frame
-   │
-   ▼  perf buffer
-┌──────────────────────────────────────────────────────────┐
-│  Rust user space                                         │
-│   libbpf-rs  : load skeleton, attach uprobe/perf-event   │
-│   goblin     : find lua_resume/lua_pcall offsets in ELF  │
-│   blazesym   : resolve native IPs → C symbol names       │
-│   inferno    : folded stacks → flame graph SVG           │
-└──────────────────────────────────────────────────────────┘
-```
+- Profiles a running LuaJIT process by PID.
+- Captures CPU samples with `perf_event` and eBPF.
+- Resolves Lua frames as `L:<chunkname>:<line>`.
+- Interleaves Lua frames with native C frames for mixed-stack analysis.
+- Writes folded stacks and an SVG flame graph.
 
-Lua frames are emitted as `L:<chunkname>:<line>` (e.g. `L:api.lua:42`); native
-frames as `<symbol>+<offset>`. When a native IP can't be resolved (it's inside
-the LuaJIT interpreter), the corresponding Lua frame is substituted in its
-place — this is how the Lua call stack is reconstructed on top of the C stack.
+## Requirements
 
-## Building
+`lua-flame` currently targets Linux only.
 
-Requirements (Debian/Ubuntu package names):
+Runtime requirements:
 
-- `clang` (≥14), `libelf-dev`, `libbpf-dev`, `linux-tools-common` (`bpftool`)
-- Rust ≥ 1.77
-- A kernel ≥ 5.13 with BTF (`CONFIG_DEBUG_INFO_BTF=y`)
-
-```sh
-cargo build --release
-```
-
-The build script (`build.rs`) compiles `bpf/profile.bpf.c` with clang and
-generates the libbpf skeleton at compile time via `libbpf-cargo`.
-
-## Usage
-
-The profiler targets a **single PID** that has LuaJIT loaded (as a shared lib
-or statically linked). LuaJIT's JIT must be **off** for the interpreter stack
-walker to read bytecode PCs:
+- Linux kernel >= 5.13 with BTF enabled (`CONFIG_DEBUG_INFO_BTF=y`)
+- `root` privileges, or equivalent capabilities for eBPF, uprobes, and perf events
+- `kernel.perf_event_paranoid <= 1`
+- A running process with LuaJIT loaded
+- LuaJIT JIT disabled in the target process:
 
 ```lua
 jit.off(); jit.flush()
 ```
 
-The only required flag is `-p/--pid`. By default the profiler samples at 49 Hz,
-runs until Ctrl-C, writes folded stacks to `folded.txt`, and writes the flame
-graph to `folded.svg`.
+Build requirements on Debian/Ubuntu:
+
+```sh
+sudo apt install clang libelf-dev libbpf-dev linux-tools-common
+```
+
+Rust >= 1.77 is required.
+
+## Quick start
+
+```sh
+cargo build --release
+
+# perf_event_paranoid must be <= 1 for sampling.
+cat /proc/sys/kernel/perf_event_paranoid
+
+# Run this only if the value is greater than 1.
+echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+
+# Profile a running LuaJIT process for 10 seconds.
+sudo ./target/release/lua-flame -p <PID> -d 10 -o folded.txt
+```
+
+The command writes:
+
+- `folded.txt`: folded stack output
+- `folded.svg`: rendered flame graph
+
+Open `folded.svg` in a browser to inspect the result.
+
+## Usage
+
+The only required flag is `-p/--pid`:
 
 ```sh
 sudo ./target/release/lua-flame -p 1234
 ```
 
-Use `-F/--frequency` and `-d/--duration` when you want to override those
-defaults, for example to take a bounded 99 Hz sample:
+By default, `lua-flame` samples at 49 Hz, runs until Ctrl-C, writes folded stacks
+to `folded.txt`, and writes the flame graph to `folded.svg`.
+
+Example bounded capture:
 
 ```sh
 sudo ./target/release/lua-flame -p 1234 -F 99 -d 10 -o folded.txt
@@ -79,81 +83,74 @@ sudo ./target/release/lua-flame -p 1234 -F 99 -d 10 -o folded.txt
 
 Options:
 
-| flag | meaning |
+| Flag | Description |
 |---|---|
-| `-p, --pid <PID>` | target process (required) |
-| `-F, --frequency <N>` | sample frequency in Hz (default 49) |
-| `-d, --duration <S>` | seconds; 0 = until Ctrl-C (default 0) |
-| `-U, --user-stacks-only` | omit kernel frames |
-| `--lua-user-stacks-only` | show only Lua frames (no native) |
-| `--disable-lua` | native-only profiling |
-| `-o, --output <FILE>` | folded output path (`.svg` written next to it) |
+| `-p, --pid <PID>` | Target process PID. Required. |
+| `-F, --frequency <N>` | Sampling frequency in Hz. Default: `49`. |
+| `-d, --duration <S>` | Capture duration in seconds. `0` means until Ctrl-C. Default: `0`. |
+| `-U, --user-stacks-only` | Omit kernel frames. |
+| `--lua-user-stacks-only` | Emit Lua frames only. |
+| `--disable-lua` | Native-only profiling. |
+| `-o, --output <FILE>` | Folded output path. The `.svg` file is written next to it. |
 
-## Trying it out
+## Demo workload
 
-A test harness that mimics the nginx/OpenResty "one request = one
-`lua_resume`" model is in `tests/`:
+If you do not already have a LuaJIT process to profile, use the bundled test
+harness. It mimics the nginx/OpenResty model where each request enters Lua via
+`lua_resume`.
 
 ```sh
-# build LuaJIT (once)
+# Build LuaJIT once.
 (cd ../luajit2/src && make && make install PREFIX=/usr/local && ldconfig)
 
-# build the C harness that drives lua_resume
+# Build the C harness that drives lua_resume.
 cc -O2 tests/harness.c -o /tmp/lua-harness \
    -I/usr/local/include/luajit-2.1 \
    -L/usr/local/lib -lluajit-5.1 -lm -ldl -Wl,-rpath=/usr/local/lib
 
-# start the workload
+# Start the workload.
 /tmp/lua-harness tests/cpu-burn.lua &
 HPID=$!
 
-# profile Lua land for 8 seconds
+# Profile Lua frames for 8 seconds.
 sudo ./target/release/lua-flame -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
 ```
 
-You do not need to build LuaJIT with `-g` for Lua stack frames to show up.
-Lua source lines come from LuaJIT's runtime metadata, not DWARF debug info.
-`-g` is only useful if you want more native symbol detail in mixed stacks.
+You do not need to build LuaJIT with `-g` for Lua stack frames. Lua source lines
+come from LuaJIT runtime metadata, not DWARF debug information. Debug symbols are
+only useful when you want more native symbol detail in mixed stacks.
 
-Open `folded.svg` in a browser; you should see multiple `L:cpu-burn.lua:*`
-frames instead of a single hot line.
+## Architecture
 
-## Releases
+```text
+target process (nginx / OpenResty / any LuaJIT embedder)
+   │
+   │  uprobe on lua_resume / lua_pcall     → capture lua_State* per tid
+   │  uretprobe on lua_yield               → drop lua_State* per tid
+   │  perf-event CPU clock @ N Hz          → on each sample:
+   │      • bpf_get_stack()                → native user-space IPs
+   │      • walk lua_State                 → bytecode PC → source line
+   │
+   ▼  perf buffer
+┌──────────────────────────────────────────────────────────┐
+│ Rust user space                                          │
+│   libbpf-rs  : load skeleton, attach uprobe/perf-event   │
+│   goblin     : find lua_resume/lua_pcall offsets in ELF  │
+│   blazesym   : resolve native IPs → C symbol names       │
+│   inferno    : folded stacks → flame graph SVG           │
+└──────────────────────────────────────────────────────────┘
+```
 
-Pushing a git tag triggers the release workflow. It builds native Linux
-artifacts on GitHub-hosted x86_64 and aarch64 runners, then uploads both
-tarballs and SHA-256 checksums to the matching GitHub Release:
+The build script compiles `bpf/profile.bpf.c` with `clang` and generates the
+Rust libbpf skeleton at compile time via `libbpf-cargo`.
 
-- `lua-flame-<tag>-x86_64-unknown-linux-gnu.tar.gz`
-- `lua-flame-<tag>-aarch64-unknown-linux-gnu.tar.gz`
+## Limitations
 
-The release jobs build on native runners instead of cross-compiling because the
-binary embeds a libbpf-generated eBPF skeleton. The workflow regenerates
-`bpf/vmlinux.h` on each runner so the BPF tracing definitions match the target
-CPU architecture.
-
-## Files
-
-| path | role |
-|---|---|
-| `bpf/profile.bpf.c` | eBPF program: uprobe capture + perf-event sampler + Lua stack walker |
-| `bpf/lua_state.h` | LuaJIT internal structs (lua_State, GCproto, GCfunc, TValue, …) ported for BPF |
-| `bpf/common.h` | shared event/struct definitions |
-| `bpf/vmlinux.h` | kernel BTF types used while compiling the BPF program |
-| `src/main.rs` | Rust entry: CLI, attach, perf-buffer aggregation, folded/SVG output |
-| `src/perf.rs` | perf_event_open helper |
-| `src/syms.rs` | `/proc/pid/maps` + goblin ELF symbol lookup |
-| `src/types.rs` | `#[repr(C)]` mirror of `common.h` |
-| `tests/cpu-burn.lua` | CPU-burning LuaJIT workload (fib + sum_squares in a coroutine) |
-| `tests/harness.c` | C driver that repeatedly calls `lua_resume` |
-
-## Notes / limitations
-
-- The Lua stack walk is bounded to `MAX_LUA_DEPTH` frames (verifier complexity).
-  Increase at the cost of BPF verifier pressure.
-- `perf_event_paranoid` should be ≤ 1 (`echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid`).
-- GC64 vs non-GC64 is selected at BPF compile time via `-DLJ_TARGET_GC64=1`
-  (default for x86-64 OpenResty). For 32-bit builds set it to 0.
-- For nginx/OpenResty the uprobe hooks `lua_resume` which fires per-request;
-  the standalone LuaJIT `luajit` binary drives everything through one
-  `lua_pcall`, so use the bundled `harness.c` (or profile a real OpenResty app).
+- The Lua stack walk is bounded by `MAX_LUA_DEPTH` to keep eBPF verifier
+  complexity manageable.
+- `kernel.perf_event_paranoid` must be `<= 1` for sampling.
+- GC64 vs non-GC64 is selected at BPF compile time with `-DLJ_TARGET_GC64=1`
+  by default for 64-bit OpenResty-style LuaJIT builds.
+- Standalone `luajit` usually drives execution through one `lua_pcall`; for a
+  more realistic `lua_resume` workload, use the bundled harness or profile a
+  real nginx/OpenResty process.
