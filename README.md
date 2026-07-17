@@ -7,8 +7,9 @@ native C frames.
 
 ![Example lua-flame output](docs/example-flamegraph.svg)
 
-The image above is a real Lua-only `folded.svg` generated from the bundled
-`tests/cpu-burn.lua` workload with the command shown in [Trying it out](#trying-it-out).
+The image above is a representative Lua-only `folded.svg` generated from the
+bundled `tests/cpu-burn.lua` workload shape with the command shown in [Trying
+it out](#trying-it-out).
 
 ## Architecture
 
@@ -40,7 +41,7 @@ place — this is how the Lua call stack is reconstructed on top of the C stack.
 
 Requirements (Debian/Ubuntu package names):
 
-- `clang` (≥14), `libelf-dev`, `libbpf-dev`, `bpftool` (linux-tools-common)
+- `clang` (≥14), `libelf-dev`, `libbpf-dev`, `linux-tools-common` (`bpftool`)
 - Rust ≥ 1.77
 - A kernel ≥ 5.13 with BTF (`CONFIG_DEBUG_INFO_BTF=y`)
 

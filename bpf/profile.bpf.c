@@ -190,15 +190,13 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
 
 	cTValue *frame = base - 1;
 	cTValue *prev_frame = NULL;
-	int level = 1, out = 0;
+	int out = 0;
 
 	#pragma unroll
 	for (int i = 0; i < MAX_LUA_DEPTH; i++) {
 		if (frame <= bot) break;
 		GCobj *gco = frame_gc(frame);
-		if (gco == obj2gco(L)) level++;
-		if (level-- == 0) {
-			level++;
+		if (gco != obj2gco(L) && !frame_isvarg(frame)) {
 			emit_lua(ctx, frame, prev_frame, pid, tid, seq, out);
 			out++;
 		}
@@ -211,7 +209,6 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
 			BCReg a = (prev_ins >> 8) & 0xff;
 			frame = frame - (1 + LJ_FR2 + a);
 		} else {
-			if (frame_isvarg(frame)) level++;
 			frame = (TValue *)((char *)frame - frame_sized(frame));
 		}
 	}

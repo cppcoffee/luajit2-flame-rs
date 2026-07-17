@@ -42,40 +42,59 @@ local function rotate_seed(seed, rounds)
     return x
 end
 
--- A slightly deeper stage that calls the mixer twice, which gives the flame
--- graph an intermediate frame to show under the request handler.
-local function scan_record(seed)
-    local x = rotate_seed(seed, scan_n)
-    local y = 0
-    for i = 1, round_n do
-        y = y + rotate_seed(x + i, round_n)
+-- Simulate parsing and normalizing a request payload.
+local function parse_payload(seed)
+    local x = seed
+    for i = 1, scan_n do
+        x = rotate_seed(x + i, round_n)
     end
-    return x + y
+    return x
 end
 
--- Combine the scan with the recursive and arithmetic hot spots above.
-local function enrich_record(seed)
-    local total = scan_record(seed)
-    total = total + fib(fib_n)
+-- Recursive + arithmetic hot path, the most obvious "real case" stack in the
+-- profiler output.
+local function score_request(seed)
+    local total = fib(fib_n)
     total = total + sum_squares(sum_n)
+    total = total + parse_payload(seed)
     return total
 end
 
--- Batch a few records together so the flame graph gets multiple branches that
--- all share the same top-level handler.
+-- Batch a few records together so the flame graph gets a wider branch under a
+-- shared top-level request frame.
 local function aggregate_batch(seed)
     local total = 0
     for i = 1, 4 do
-        total = total + enrich_record(seed + i)
+        total = total + score_request(seed + i)
     end
     return total
 end
 
--- Final request-shaped stage: take one larger batch and one follow-up pass.
+-- Another branch that leans harder on the recursive side.
+local function inspect_fib_branch(seed)
+    local a = fib(fib_n + 1)
+    local b = fib(fib_n - 2)
+    local c = parse_payload(seed + a)
+    return a + b + c
+end
+
+-- Another branch that leans harder on looped arithmetic and record folding.
+local function inspect_loop_branch(seed)
+    local total = 0
+    for i = 1, 3 do
+        total = total + sum_squares(sum_n + i * 4)
+        total = total + parse_payload(seed + total + i)
+    end
+    return total
+end
+
+-- Final request-shaped stage: fan out into multiple realistic-looking request
+-- handlers and then recombine the work.
 local function render_response(seed)
     local left = aggregate_batch(seed)
-    local right = enrich_record(seed + left)
-    return left + right
+    local mid = inspect_fib_branch(seed + left)
+    local right = inspect_loop_branch(seed + mid)
+    return left + mid + right
 end
 
 -- The "request handler" -- this is what harness.c resumes as a coroutine. It
@@ -84,10 +103,13 @@ function handler()
     local total = 0
     for i = 1, work_iters do         -- outer hot loop
         local seed = rotate_seed(i, round_n)
-        total = total + scan_record(seed)
-        total = total + enrich_record(seed + total)
-        total = total + aggregate_batch(seed + i)
-        total = total + render_response(seed + total)
+        if i % 3 == 0 then
+            total = total + inspect_fib_branch(seed)
+        elseif i % 3 == 1 then
+            total = total + inspect_loop_branch(seed)
+        else
+            total = total + render_response(seed + total)
+        end
         if i % 1000 == 0 then
             coroutine.yield()        -- yield back to harness
         end
