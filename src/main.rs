@@ -36,8 +36,9 @@ struct Args {
     duration: u64,
     #[arg(short = 'U', long)]
     user_stacks_only: bool,
+    /// Include native C frames in addition to Lua frames.
     #[arg(long)]
-    lua_user_stacks_only: bool,
+    include_c_stacks: bool,
     #[arg(long)]
     disable_lua: bool,
     #[arg(short, long, default_value = "folded.txt")]
@@ -177,11 +178,11 @@ fn main() -> Result<()> {
         });
         let sym = Symbolizer::new();
         let mut g = pending.lock().unwrap();
-        let lua_only = args.lua_user_stacks_only;
+        let include_c_stacks = args.include_c_stacks || args.disable_lua;
         let native = std::mem::take(&mut g.native);
         for (seq, ips) in native {
             let lua = g.lua.remove(&seq).unwrap_or_default();
-            if let Some(stack) = build_stack(&ips, &lua, &src, &sym, lua_only) {
+            if let Some(stack) = build_stack(&ips, &lua, &src, &sym, include_c_stacks) {
                 *g.folded.entry(stack).or_insert(0) += 1;
             }
         }
@@ -190,7 +191,14 @@ fn main() -> Result<()> {
 
     write_folded(&folded, std::path::Path::new(&args.output))?;
     let svg = std::path::Path::new(&args.output).with_extension("svg");
-    match make_svg(std::path::Path::new(&args.output), &svg) {
+    let title = if args.disable_lua {
+        "luajit2-flame-rs (native only)"
+    } else if args.include_c_stacks {
+        "luajit2-flame-rs (C + LuaJIT)"
+    } else {
+        "luajit2-flame-rs (LuaJIT only)"
+    };
+    match make_svg(std::path::Path::new(&args.output), &svg, title) {
         Ok(()) => println!("[+] flame graph SVG: {}", svg.display()),
         Err(e) => println!("[!] SVG generation failed: {e}"),
     }
@@ -231,32 +239,30 @@ fn build_stack(
     lua: &[LuaStackEvent],
     src: &Source,
     sym: &Symbolizer,
-    lua_only: bool,
+    include_c_stacks: bool,
 ) -> Option<String> {
     let mut native_frames: Vec<Option<String>> = Vec::new();
 
-    for &ip in ips.iter().rev() {
-        if ip == 0 {
-            continue;
-        }
-        match sym.symbolize_single(src, Input::AbsAddr(ip)) {
-            Ok(Symbolized::Sym(s)) if !s.name.is_empty() => {
-                if !lua_only {
-                    native_frames.push(Some(format!("{}+{:#x}", s.name, s.offset)));
-                } else {
-                    native_frames.push(None);
-                }
+    if include_c_stacks {
+        for &ip in ips.iter().rev() {
+            if ip == 0 {
+                continue;
             }
-            _ => native_frames.push(None),
+            match sym.symbolize_single(src, Input::AbsAddr(ip)) {
+                Ok(Symbolized::Sym(s)) if !s.name.is_empty() => {
+                    native_frames.push(Some(format!("{}+{:#x}", s.name, s.offset)));
+                }
+                _ => native_frames.push(None),
+            }
         }
     }
-    fold_symbolized_stack(&native_frames, lua, lua_only)
+    fold_symbolized_stack(&native_frames, lua, include_c_stacks)
 }
 
 fn fold_symbolized_stack(
     native_frames: &[Option<String>],
     lua: &[LuaStackEvent],
-    lua_only: bool,
+    include_c_stacks: bool,
 ) -> Option<String> {
     let mut frames: Vec<String> = Vec::new();
     let mut lua_idx = 0usize;
@@ -268,7 +274,7 @@ fn fold_symbolized_stack(
 
     for native in native_frames {
         if let Some(name) = native {
-            if !lua_only {
+            if include_c_stacks {
                 frames.push(name.clone());
             }
         } else if lua_idx < lua_sorted.len() {
@@ -276,7 +282,7 @@ fn fold_symbolized_stack(
                 frames.push(frame);
             }
             lua_idx += 1;
-        } else if !lua_only {
+        } else if include_c_stacks {
             frames.push("[unknown]".into());
         }
     }
@@ -334,10 +340,10 @@ fn write_folded(folded: &HashMap<String, u64>, out: &std::path::Path) -> Result<
     Ok(())
 }
 
-fn make_svg(folded: &std::path::Path, svg: &std::path::Path) -> Result<()> {
+fn make_svg(folded: &std::path::Path, svg: &std::path::Path, title: &str) -> Result<()> {
     use inferno::flamegraph::{from_files, Options};
     let mut opts = Options::default();
-    opts.title = "luajit2-flame-rs (LuaJIT only)".to_string();
+    opts.title = title.to_string();
     from_files(
         &mut opts,
         &[folded.to_path_buf()],
@@ -391,6 +397,22 @@ mod tests {
     }
 
     #[test]
+    fn cli_defaults_to_lua_only() {
+        let args = Args::try_parse_from(["luajit2-flame-rs", "--pid", "42"]).unwrap();
+
+        assert!(!args.include_c_stacks);
+        assert!(!args.disable_lua);
+    }
+
+    #[test]
+    fn cli_enables_c_and_lua_stacks_explicitly() {
+        let args = Args::try_parse_from(["luajit2-flame-rs", "--pid", "42", "--include-c-stacks"])
+            .unwrap();
+
+        assert!(args.include_c_stacks);
+    }
+
+    #[test]
     fn folded_stack_uses_lua_root_to_leaf_order() {
         let key = SampleKey {
             pid: 10,
@@ -408,7 +430,7 @@ mod tests {
             Some("tail+0x4".to_string()),
         ];
 
-        let folded = fold_symbolized_stack(&native, &lua, false).unwrap();
+        let folded = fold_symbolized_stack(&native, &lua, true).unwrap();
 
         assert_eq!(
             folded,
@@ -417,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn folded_stack_lua_only_drops_native_but_keeps_lua() {
+    fn folded_stack_default_drops_native_but_keeps_lua() {
         let key = SampleKey {
             pid: 10,
             tid: 20,
@@ -426,7 +448,7 @@ mod tests {
         let lua = [lua_event(key, 0, "@/srv/app.lua", 42)];
         let native = [Some("native+0x1".to_string()), None];
 
-        let folded = fold_symbolized_stack(&native, &lua, true).unwrap();
+        let folded = fold_symbolized_stack(&native, &lua, false).unwrap();
 
         assert_eq!(folded, "L:app.lua:42");
     }

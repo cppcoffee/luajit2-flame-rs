@@ -72,8 +72,8 @@ The only required flag is `-p/--pid`:
 sudo ./target/release/luajit2-flame-rs -p 1234
 ```
 
-By default, `luajit2-flame-rs` samples at 99 Hz, runs until Ctrl-C, writes folded stacks
-to `folded.txt`, and writes the flame graph to `folded.svg`.
+By default, `luajit2-flame-rs` samples at 99 Hz, runs until Ctrl-C, emits Lua frames
+only, writes folded stacks to `folded.txt`, and writes the flame graph to `folded.svg`.
 
 Example bounded capture:
 
@@ -89,7 +89,7 @@ Options:
 | `-F, --frequency <N>` | Optional sampling frequency in Hz. Default: `99`. |
 | `-d, --duration <S>` | Capture duration in seconds. `0` means until Ctrl-C. Default: `0`. |
 | `-U, --user-stacks-only` | Omit kernel frames. |
-| `--lua-user-stacks-only` | Emit Lua frames only. |
+| `--include-c-stacks` | Include native C frames in addition to Lua frames. |
 | `--disable-lua` | Native-only profiling. |
 | `-o, --output <FILE>` | Folded output path. The `.svg` file is written next to it. |
 
@@ -112,8 +112,11 @@ cc -O2 tests/harness.c -o /tmp/lua-harness \
 /tmp/lua-harness tests/cpu-burn.lua &
 HPID=$!
 
-# Profile Lua frames for 8 seconds.
-sudo ./target/release/luajit2-flame-rs -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
+# Profile Lua frames for 8 seconds (the default output mode).
+sudo ./target/release/luajit2-flame-rs -p $HPID -d 8 -o folded.txt
+
+# Include native C frames in the same flame graph.
+sudo ./target/release/luajit2-flame-rs -p $HPID --include-c-stacks -d 8 -o mixed.txt
 ```
 
 You do not need to build LuaJIT with `-g` for Lua stack frames. Lua source lines
