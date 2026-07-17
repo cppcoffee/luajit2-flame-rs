@@ -12,7 +12,15 @@ fn harness_runs_against_local_luajit2() {
         return;
     }
 
-    let out = std::env::temp_dir().join(format!("lua-flame-harness-{}", std::process::id()));
+    let temp = std::env::temp_dir().join(format!("lua-flame-harness-{}", std::process::id()));
+    let lib_dir = temp.join("lib");
+    std::fs::create_dir_all(&lib_dir).expect("failed to create temporary lib dir");
+    let linked_luajit = lib_dir.join("libluajit.so");
+    let soname_luajit = lib_dir.join("libluajit-5.1.so.2");
+    std::fs::copy(&luajit_so, &linked_luajit).expect("failed to copy libluajit.so");
+    std::fs::copy(&luajit_so, &soname_luajit).expect("failed to copy libluajit SONAME");
+
+    let out = temp.join("lua-harness");
     let status = Command::new("cc")
         .arg("-O2")
         .arg(repo.join("tests/harness.c"))
@@ -21,11 +29,11 @@ fn harness_runs_against_local_luajit2() {
         .arg("-I")
         .arg(&luajit_src)
         .arg("-L")
-        .arg(&luajit_src)
+        .arg(&lib_dir)
         .arg("-lluajit")
         .arg("-lm")
         .arg("-ldl")
-        .arg(format!("-Wl,-rpath={}", luajit_src.display()))
+        .arg(format!("-Wl,-rpath={}", lib_dir.display()))
         .status()
         .expect("failed to execute cc");
     assert!(status.success(), "cc failed with status {status}");
@@ -45,7 +53,7 @@ fn harness_runs_against_local_luajit2() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let _ = std::fs::remove_file(out);
+    let _ = std::fs::remove_dir_all(temp);
 }
 
 fn luajit_src_dir(repo: &Path) -> PathBuf {

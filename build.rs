@@ -8,16 +8,26 @@ fn main() {
     let obj_out = PathBuf::from(&out_dir).join("profile.bpf.o");
     let skel_out = PathBuf::from(&out_dir).join("profile.skel.rs");
 
-    let gc64 = "1"; // x86-64 LuaJIT default
+    let target_arch =
+        std::env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH not set");
+    let (bpf_arch, multiarch_include) = match target_arch.as_str() {
+        "x86_64" => ("x86", "x86_64-linux-gnu"),
+        "aarch64" => ("arm64", "aarch64-linux-gnu"),
+        other => panic!("unsupported target architecture for BPF build: {other}"),
+    };
+
+    // OpenResty LuaJIT2 defaults to GC64 on the 64-bit Linux architectures we
+    // release. This must match the target LuaJIT layout read by the BPF walker.
+    let gc64 = "1";
 
     let clang_args: Vec<String> = vec![
         "-g".into(),
         "-O2".into(),
         "-target".into(),
         "bpf".into(),
-        "-D__TARGET_ARCH_x86".into(),
+        format!("-D__TARGET_ARCH_{bpf_arch}"),
         format!("-DLJ_TARGET_GC64={gc64}"),
-        "-I/usr/include/x86_64-linux-gnu".into(),
+        format!("-I/usr/include/{multiarch_include}"),
         "-Ibpf".into(),
     ];
 
@@ -36,4 +46,5 @@ fn main() {
     println!("cargo:rerun-if-changed=bpf/lua_state.h");
     println!("cargo:rerun-if-changed=bpf/common.h");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
 }

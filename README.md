@@ -118,6 +118,20 @@ Lua source lines come from LuaJIT's runtime metadata, not DWARF debug info.
 Open `folded.svg` in a browser; you should see multiple `L:cpu-burn.lua:*`
 frames instead of a single hot line.
 
+## Releases
+
+Pushing a git tag triggers the release workflow. It builds native Linux
+artifacts on GitHub-hosted x86_64 and aarch64 runners, then uploads both
+tarballs and SHA-256 checksums to the matching GitHub Release:
+
+- `lua-flame-<tag>-x86_64-unknown-linux-gnu.tar.gz`
+- `lua-flame-<tag>-aarch64-unknown-linux-gnu.tar.gz`
+
+The release jobs build on native runners instead of cross-compiling because the
+binary embeds a libbpf-generated eBPF skeleton. The workflow regenerates
+`bpf/vmlinux.h` on each runner so the BPF tracing definitions match the target
+CPU architecture.
+
 ## Files
 
 | path | role |
@@ -125,7 +139,7 @@ frames instead of a single hot line.
 | `bpf/profile.bpf.c` | eBPF program: uprobe capture + perf-event sampler + Lua stack walker |
 | `bpf/lua_state.h` | LuaJIT internal structs (lua_State, GCproto, GCfunc, TValue, …) ported for BPF |
 | `bpf/common.h` | shared event/struct definitions |
-| `bpf/vmlinux.h` | kernel BTF types (x86-64) |
+| `bpf/vmlinux.h` | kernel BTF types used while compiling the BPF program |
 | `src/main.rs` | Rust entry: CLI, attach, perf-buffer aggregation, folded/SVG output |
 | `src/perf.rs` | perf_event_open helper |
 | `src/syms.rs` | `/proc/pid/maps` + goblin ELF symbol lookup |

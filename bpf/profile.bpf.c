@@ -230,6 +230,15 @@ static __always_inline u32 next_seq(u32 tid)
 	return v;
 }
 
+static __always_inline u64 get_lua_state_arg1(struct pt_regs *ctx)
+{
+#if defined(__TARGET_ARCH_arm64)
+	return *(const volatile u64 *)ctx;
+#else
+	return (u64)PT_REGS_PARM1(ctx);
+#endif
+}
+
 /* ---- perf-event sampler ---------------------------------------------- */
 SEC("perf_event")
 int do_perf_event(struct bpf_perf_event_data *ctx)
@@ -272,7 +281,7 @@ int handle_entry_lua(struct pt_regs *ctx)
 	u32 pid, tid;
 	get_pid_tid(&pid, &tid);
 	if (targ_pid != -1 && targ_pid != pid) return 0;
-	u64 L = (u64)PT_REGS_PARM1(ctx);
+	u64 L = get_lua_state_arg1(ctx);
 	if (!L) return 0;
 	struct lua_state_slot *old = bpf_map_lookup_elem(&lua_states, &tid);
 	struct lua_state_slot slot = {};
