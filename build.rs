@@ -45,6 +45,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", bpf_src.display());
     println!("cargo:rerun-if-changed=bpf/lua_state.h");
     println!("cargo:rerun-if-changed=bpf/common.h");
+    println!("cargo:rerun-if-changed=bpf/vmlinux.h");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
 }

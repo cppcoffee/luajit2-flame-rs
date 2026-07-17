@@ -45,17 +45,41 @@ jobs:
             pkg-config \
             zlib1g-dev
           sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" || \
-            sudo apt-get install -y --no-install-recommends linux-tools-generic
+            sudo apt-get install -y --no-install-recommends linux-tools-generic || \
+            echo "::warning::bpftool package install failed; using checked-in bpf/vmlinux.h"
 
       - name: Regenerate architecture BTF header
         run: |
           set -euo pipefail
-          bpftool_bin="$(command -v bpftool)"
-          if ! "$bpftool_bin" version >/dev/null 2>&1; then
-            bpftool_bin="$(find /usr/lib/linux-tools -type f -name bpftool | sort -V | tail -n 1)"
+          bpftool_bin=""
+          if command -v bpftool >/dev/null 2>&1; then
+            candidate="$(command -v bpftool)"
+            if "$candidate" version >/dev/null 2>&1; then
+              bpftool_bin="$candidate"
+            fi
           fi
-          test -x "$bpftool_bin"
-          "$bpftool_bin" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+
+          if [ -z "$bpftool_bin" ]; then
+            search_dirs=()
+            for dir in /usr/lib/linux-tools /usr/lib/linux-tools-*; do
+              [ -e "$dir" ] && search_dirs+=("$dir")
+            done
+            if [ "${#search_dirs[@]}" -gt 0 ]; then
+              while IFS= read -r candidate; do
+                if [ -x "$candidate" ] && "$candidate" version >/dev/null 2>&1; then
+                  bpftool_bin="$candidate"
+                  break
+                fi
+              done < <(find "${search_dirs[@]}" \( -type f -o -type l \) -name bpftool 2>/dev/null | sort -V)
+            fi
+          fi
+
+          if [ -n "$bpftool_bin" ] && [ -r /sys/kernel/btf/vmlinux ]; then
+            "$bpftool_bin" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h.tmp
+            mv bpf/vmlinux.h.tmp bpf/vmlinux.h
+          else
+            echo "::warning::bpftool or /sys/kernel/btf/vmlinux unavailable; using checked-in bpf/vmlinux.h"
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

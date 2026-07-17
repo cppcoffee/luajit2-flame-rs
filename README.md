@@ -72,7 +72,7 @@ The only required flag is `-p/--pid`:
 sudo ./target/release/lua-flame -p 1234
 ```
 
-By default, `lua-flame` samples at 49 Hz, runs until Ctrl-C, writes folded stacks
+By default, `lua-flame` samples at 99 Hz, runs until Ctrl-C, writes folded stacks
 to `folded.txt`, and writes the flame graph to `folded.svg`.
 
 Example bounded capture:
@@ -86,7 +86,7 @@ Options:
 | Flag | Description |
 |---|---|
 | `-p, --pid <PID>` | Target process PID. Required. |
-| `-F, --frequency <N>` | Sampling frequency in Hz. Default: `49`. |
+| `-F, --frequency <N>` | Optional sampling frequency in Hz. Default: `99`. |
 | `-d, --duration <S>` | Capture duration in seconds. `0` means until Ctrl-C. Default: `0`. |
 | `-U, --user-stacks-only` | Omit kernel frames. |
 | `--lua-user-stacks-only` | Emit Lua frames only. |
@@ -143,6 +143,20 @@ target process (nginx / OpenResty / any LuaJIT embedder)
 
 The build script compiles `bpf/profile.bpf.c` with `clang` and generates the
 Rust libbpf skeleton at compile time via `libbpf-cargo`.
+
+## Releases
+
+Pushing a git tag triggers the release workflow. It builds native Linux
+artifacts on GitHub-hosted x86_64 and aarch64 runners, then uploads both
+tarballs and SHA-256 checksums to the matching GitHub Release:
+
+- `lua-flame-<tag>-x86_64-unknown-linux-gnu.tar.gz`
+- `lua-flame-<tag>-aarch64-unknown-linux-gnu.tar.gz`
+
+The release jobs build on native runners instead of cross-compiling because the
+binary embeds a libbpf-generated eBPF skeleton. The workflow tries to regenerate
+`bpf/vmlinux.h` from the runner's BTF data and falls back to the checked-in
+header if the runner does not expose a usable `bpftool`.
 
 ## Limitations
 

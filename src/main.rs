@@ -30,7 +30,7 @@ use profile::ProfileSkelBuilder;
 struct Args {
     #[arg(short, long)]
     pid: i32,
-    #[arg(short = 'F', long, default_value_t = 49)]
+    #[arg(short = 'F', long, default_value_t = 99)]
     frequency: u64,
     #[arg(short, long, default_value_t = 0)]
     duration: u64,
