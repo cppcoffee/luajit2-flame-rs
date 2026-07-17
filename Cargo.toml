@@ -11,7 +11,7 @@ name = "lua-flame"
 path = "src/main.rs"
 
 [dependencies]
-libbpf-rs    = "0.24"
+libbpf-rs    = { version = "0.24", features = ["vendored"] }
 libc         = "0.2"
 clap         = { version = "4.5", features = ["derive"] }
 goblin       = { version = "0.9", default-features = false, features = ["elf32", "elf64", "endian_fd", "alloc", "std"] }

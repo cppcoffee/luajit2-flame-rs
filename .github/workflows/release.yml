@@ -12,6 +12,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  CC_x86_64_unknown_linux_musl: musl-gcc
+  CC_aarch64_unknown_linux_musl: musl-gcc
 
 jobs:
   build:
@@ -23,10 +25,10 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-musl
           - arch: aarch64
             runner: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-gnu
+            rust_target: aarch64-unknown-linux-musl
 
     steps:
       - name: Checkout lua-flame-rs
@@ -36,12 +38,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            autopoint \
+            binutils \
+            bison \
             build-essential \
             clang \
-            libbpf-dev \
+            file \
+            flex \
+            gawk \
             libelf-dev \
             linux-tools-common \
             llvm \
+            musl-tools \
             pkg-config \
             zlib1g-dev
           sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" || \
@@ -93,6 +103,21 @@ jobs:
 
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.rust_target }}
+
+      - name: Verify static linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.rust_target }}/release/lua-flame"
+          file "$binary"
+          if readelf -l "$binary" | grep -q ' INTERP '; then
+            echo "::error::$binary contains a dynamic interpreter"
+            exit 1
+          fi
+          if readelf -d "$binary" 2>/dev/null | grep -q '(NEEDED)'; then
+            echo "::error::$binary contains dynamic dependencies"
+            exit 1
+          fi
 
       - name: Package release artifact
         shell: bash
