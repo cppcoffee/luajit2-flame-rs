@@ -39,20 +39,23 @@ fn harness_runs_against_local_luajit2() {
         .expect("failed to execute cc");
     assert!(status.success(), "cc failed with status {status}");
 
-    let output = Command::new(&out)
-        .arg(repo.join("tests/cpu-burn.lua"))
-        .env("LUAJIT2_FLAME_RS_HARNESS_ITERS", "3")
-        .env("LUAJIT2_FLAME_RS_WORK_ITERS", "100")
-        .env("LUAJIT2_FLAME_RS_FIB_N", "5")
-        .env("LUAJIT2_FLAME_RS_SUM_N", "10")
-        .output()
-        .expect("failed to run harness");
-    assert!(
-        output.status.success(),
-        "harness failed: status={} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
+    for jit in ["0", "1"] {
+        let output = Command::new(&out)
+            .arg(repo.join("tests/cpu-burn.lua"))
+            .env("LUAJIT2_FLAME_RS_HARNESS_ITERS", "3")
+            .env("LUAJIT2_FLAME_RS_WORK_ITERS", "100")
+            .env("LUAJIT2_FLAME_RS_FIB_N", "5")
+            .env("LUAJIT2_FLAME_RS_SUM_N", "10")
+            .env("LUAJIT2_FLAME_RS_JIT", jit)
+            .output()
+            .expect("failed to run harness");
+        assert!(
+            output.status.success(),
+            "harness failed with JIT={jit}: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     let _ = std::fs::remove_dir_all(temp);
 }

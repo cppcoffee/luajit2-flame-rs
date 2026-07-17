@@ -1,9 +1,9 @@
 # luajit2-flame-rs
 
 `luajit2-flame-rs` is an eBPF-based CPU flame graph profiler for LuaJIT 2.x. It is
-written in Rust for user space and C for the eBPF program, and it can resolve
-LuaJIT interpreter frames down to `source:line` while preserving native C frames
-in mixed stacks.
+written in Rust for user space and C for the eBPF program. It resolves interpreter
+frames down to `source:line`, attributes active JIT traces to their Lua function,
+and can preserve native C frames in mixed stacks.
 
 ![Example luajit2-flame-rs output](docs/example-flamegraph.svg)
 
@@ -15,6 +15,7 @@ bundled `tests/cpu-burn.lua` workload.
 - Profiles a running LuaJIT process by PID.
 - Captures CPU samples with `perf_event` and eBPF.
 - Resolves Lua frames as `L:<chunkname>:<line>`.
+- Attributes JIT trace execution as `JIT:<chunkname>:<function-line>`.
 - Interleaves Lua frames with native C frames for mixed-stack analysis.
 - Writes folded stacks and an SVG flame graph.
 
@@ -28,11 +29,6 @@ Runtime requirements:
 - `root` privileges, or equivalent capabilities for eBPF, uprobes, and perf events
 - `kernel.perf_event_paranoid <= 1`
 - A running process with LuaJIT loaded
-- LuaJIT JIT disabled in the target process:
-
-```lua
-jit.off(); jit.flush()
-```
 
 Build requirements on Debian/Ubuntu:
 
@@ -119,6 +115,9 @@ sudo ./target/release/luajit2-flame-rs -p $HPID -d 8 -o folded.txt
 sudo ./target/release/luajit2-flame-rs -p $HPID --include-c-stacks -d 8 -o mixed.txt
 ```
 
+The demo disables JIT by default for deterministic interpreter line coverage.
+Set `LUAJIT2_FLAME_RS_JIT=1` when starting the harness to exercise JIT profiling.
+
 You do not need to build LuaJIT with `-g` for Lua stack frames. Lua source lines
 come from LuaJIT runtime metadata, not DWARF debug information. Debug symbols are
 only useful when you want more native symbol detail in mixed stacks.
@@ -167,6 +166,9 @@ header if the runner does not expose a usable `bpftool`.
 
 - The Lua stack walk is bounded by `MAX_LUA_DEPTH` to keep eBPF verifier
   complexity manageable.
+- `L:` interpreter frames identify the sampled source line. `JIT:` frames identify
+  the materialized Lua function running on a trace; optimized inline frames and the
+  exact source line within a trace are not reconstructed.
 - `kernel.perf_event_paranoid` must be `<= 1` for sampling.
 - GC64 vs non-GC64 is selected at BPF compile time with `-DLJ_TARGET_GC64=1`
   by default for 64-bit OpenResty-style LuaJIT builds.

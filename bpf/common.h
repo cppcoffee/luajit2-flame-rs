@@ -11,6 +11,7 @@ enum func_type {
 	FUNC_TYPE_LUA = 0,
 	FUNC_TYPE_C   = 1,
 	FUNC_TYPE_F   = 2,
+	FUNC_TYPE_JIT = 3,
 };
 
 /* native (user-space) stack sample. bpf_get_stack fills `ips` leaf-first. */

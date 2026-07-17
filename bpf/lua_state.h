@@ -71,6 +71,11 @@ typedef struct MRef {
 
 #define LJ_GCVMASK (((uint64_t)1 << 47) - 1)
 
+/* Generated from the supported OpenResty LuaJIT2 GC64 ABI. These user-space
+ * types cannot use kernel CO-RE relocation. */
+#define LJ_G_OFS_CUR_L     376
+#define LJ_G_OFS_JIT_BASE  384
+
 /* ---- tagged value (8 bytes) ------------------------------------------- *
  * We only need two interpretations in the BPF probe:
  *   .gcr  (a GCobj reference, possibly with tag bits)
@@ -85,7 +90,9 @@ typedef union TValue {
 typedef const TValue cTValue;
 
 /* ---- object tags ------------------------------------------------------ */
-#define LJ_TFUNC    (~8u)
+#define LJ_TFUNC      (~8u)
+#define LJ_GCT_THREAD 6
+#define LJ_GCT_FUNC   8
 
 /* ---- GC header / string ----------------------------------------------- */
 #define GCHeader  GCRef nextgc; uint8_t marked; uint8_t gct
@@ -243,9 +250,14 @@ static __always_inline GCobj *frame_gc(cTValue *frame)
 #endif
 }
 
-static __always_inline GCfunc *frame_func(cTValue *frame)
+static __always_inline bool valid_user_ptr(uint64_t ptr)
 {
-	return &frame_gc(frame)->fn;
+	return ptr >= 4096 && ptr <= LJ_GCVMASK;
+}
+
+static __always_inline uint8_t gc_type(GCobj *gco)
+{
+	return LUARD_T(&gco->gch, gct, uint8_t);
 }
 
 /* ---- lua_State -------------------------------------------------------- */

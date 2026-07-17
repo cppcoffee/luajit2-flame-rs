@@ -5,11 +5,12 @@
 -- The hot operations below fan out through several helper stages so the flame
 -- graph shows more than one Lua source line and a few nested call chains.
 
--- Disable JIT: profile the interpreter, where the eBPF walker can read the
--- bytecode PC -> source line mapping. JIT traces don't carry the same frame
--- layout and would show as native code.
-jit.off()
-jit.flush()
+if os.getenv("LUAJIT2_FLAME_RS_JIT") == "1" then
+    jit.on()
+else
+    jit.off()
+    jit.flush()
+end
 
 local work_iters = tonumber(os.getenv("LUAJIT2_FLAME_RS_WORK_ITERS")) or 200000
 local fib_n = tonumber(os.getenv("LUAJIT2_FLAME_RS_FIB_N")) or 15

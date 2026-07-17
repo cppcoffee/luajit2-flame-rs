@@ -126,11 +126,11 @@ static __always_inline BCPos get_frame_pc(GCfunc *fn, cTValue *prev_frame)
 
 /* emit one lua frame as its own perf event */
 static __always_inline void emit_lua(struct bpf_perf_event_data *ctx,
-	                                     cTValue *frame, cTValue *prev_frame,
-	                                     u32 pid, u32 tid, u32 seq, int level)
+	                                     GCobj *gco, cTValue *prev_frame,
+	                                     u32 pid, u32 tid, u32 seq, int level,
+	                                     bool jit_top)
 {
-	GCfunc *fn = frame_func(frame);
-	if (!fn) return;
+	GCfunc *fn = &gco->fn;
 
 	u32 zero = 0;
 	struct lua_stack_event *e = bpf_map_lookup_elem(&lua_event_buf, &zero);
@@ -149,7 +149,7 @@ static __always_inline void emit_lua(struct bpf_perf_event_data *ctx,
 
 	uint8_t ffid = LUARD_T(fn, c.ffid, uint8_t);
 	if (ffid == FF_LUA) {
-		e->type = FUNC_TYPE_LUA;
+		e->type = jit_top ? FUNC_TYPE_JIT : FUNC_TYPE_LUA;
 		GCproto *pt = funcproto(fn);
 		if (!pt) return;
 		BCPos pc = get_frame_pc(fn, prev_frame);
@@ -176,7 +176,7 @@ static __always_inline void emit_lua(struct bpf_perf_event_data *ctx,
 	                      e, sizeof(*e));
 }
 
-/* walk the lua interpreter stack backwards, emitting each frame */
+/* Walk the materialized Lua VM stack backwards, including an active JIT BASE. */
 static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
                                            u32 tid, u32 pid, u32 seq)
 {
@@ -185,8 +185,33 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
 	lua_State *L = (lua_State *)(unsigned long)slot->ptr;
 
 	uint64_t stack_ptr = LUARD_T(L, stack, MRef).ptr64;
+	uint64_t maxstack_ptr = LUARD_T(L, maxstack, MRef).ptr64;
 	TValue *bot = (TValue *)(unsigned long)stack_ptr + LJ_FR2;
-	TValue *base = (TValue *)(unsigned long)LUARD_T(L, base, uint64_t);
+	TValue *maxstack = (TValue *)(unsigned long)maxstack_ptr;
+	uint64_t base_ptr = LUARD_T(L, base, uint64_t);
+	bool on_jit_trace = false;
+
+	MRef glref = LUARD_T(L, glref, MRef);
+	uint64_t gptr = mrefu64(glref);
+	if (valid_user_ptr(gptr)) {
+		GCRef cur_L = {};
+		MRef jit_base = {};
+		bpf_probe_read_user(&cur_L, sizeof(cur_L),
+		                    (const void *)(gptr + LJ_G_OFS_CUR_L));
+		bpf_probe_read_user(&jit_base, sizeof(jit_base),
+		                    (const void *)(gptr + LJ_G_OFS_JIT_BASE));
+		uint64_t cur_L_ptr = gcrefu64(cur_L) & LJ_GCVMASK;
+		uint64_t jit_base_ptr = mrefu64(jit_base);
+		if (cur_L_ptr == (uint64_t)L && jit_base_ptr > (uint64_t)bot &&
+		    jit_base_ptr <= (uint64_t)maxstack) {
+			base_ptr = jit_base_ptr;
+			on_jit_trace = true;
+		}
+	}
+
+	if (base_ptr <= (uint64_t)bot || base_ptr > (uint64_t)maxstack)
+		return;
+	TValue *base = (TValue *)(unsigned long)base_ptr;
 
 	cTValue *frame = base - 1;
 	cTValue *prev_frame = NULL;
@@ -194,22 +219,37 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
 
 	#pragma unroll
 	for (int i = 0; i < MAX_LUA_DEPTH; i++) {
-		if (frame <= bot) break;
+		if (frame <= bot || frame >= maxstack) break;
 		GCobj *gco = frame_gc(frame);
-		if (gco != obj2gco(L) && !frame_isvarg(frame)) {
-			emit_lua(ctx, frame, prev_frame, pid, tid, seq, out);
+		uint64_t gco_ptr = (uint64_t)gco;
+		bool vararg = frame_isvarg(frame);
+		if (!valid_user_ptr(gco_ptr)) break;
+		uint8_t gct = gc_type(gco);
+		if (gco != obj2gco(L) && !vararg) {
+			if (gct != LJ_GCT_FUNC) break;
+			emit_lua(ctx, gco, prev_frame, pid, tid, seq, out,
+			         on_jit_trace && out == 0);
 			out++;
+		} else if (!vararg && gct != LJ_GCT_THREAD) {
+			break;
 		}
 		prev_frame = frame;
 		if (frame_islua(frame)) {
 			const BCIns *pc = frame_pc(frame);
+			if (!valid_user_ptr((uint64_t)pc)) break;
 			BCIns prev_ins = 0;
 			bpf_probe_read_user(&prev_ins, sizeof(prev_ins),
 			                    (void *)((char *)pc - sizeof(BCIns)));
 			BCReg a = (prev_ins >> 8) & 0xff;
-			frame = frame - (1 + LJ_FR2 + a);
+			cTValue *next = frame - (1 + LJ_FR2 + a);
+			if (next >= frame || next < bot) break;
+			frame = next;
 		} else {
-			frame = (TValue *)((char *)frame - frame_sized(frame));
+			ptrdiff_t size = frame_sized(frame);
+			if (size <= 0 || (size & (sizeof(TValue) - 1))) break;
+			cTValue *next = (TValue *)((char *)frame - size);
+			if (next >= frame || next < bot) break;
+			frame = next;
 		}
 	}
 }

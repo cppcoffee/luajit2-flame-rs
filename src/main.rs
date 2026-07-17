@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use types::{LuaStackEvent, NativeEvent, SampleKey, FUNC_TYPE_C, FUNC_TYPE_F, FUNC_TYPE_LUA};
+use types::{
+    LuaStackEvent, NativeEvent, SampleKey, FUNC_TYPE_C, FUNC_TYPE_F, FUNC_TYPE_JIT, FUNC_TYPE_LUA,
+};
 
 mod profile {
     include!(concat!(env!("OUT_DIR"), "/profile.skel.rs"));
@@ -311,6 +313,16 @@ fn format_lua_frame(ev: &LuaStackEvent) -> Option<String> {
                 None
             }
         }
+        FUNC_TYPE_JIT => {
+            let chunk = strip_chunkname(&ev.name_str());
+            if ev.line > 0 {
+                Some(format!("JIT:{}:{}", chunk, ev.line))
+            } else if !chunk.is_empty() {
+                Some(format!("JIT:{}", chunk))
+            } else {
+                None
+            }
+        }
         FUNC_TYPE_C => Some(format!("C:{:#x}", ev.funcp)),
         FUNC_TYPE_F => Some(format!("builtin#{}", ev.line)),
         _ => None,
@@ -510,6 +522,14 @@ mod tests {
             ..LuaStackEvent::default()
         };
         assert_eq!(format_lua_frame(&builtin).unwrap(), "builtin#7");
+
+        let jit = LuaStackEvent {
+            r#type: FUNC_TYPE_JIT,
+            line: 17,
+            name: lua.name,
+            ..LuaStackEvent::default()
+        };
+        assert_eq!(format_lua_frame(&jit).unwrap(), "JIT:c.lua:17");
     }
 
     #[test]

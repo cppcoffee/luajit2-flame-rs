@@ -8,6 +8,7 @@ pub const PERF_MAX_STACK_DEPTH: usize = 32;
 pub const FUNC_TYPE_LUA: i32 = 0;
 pub const FUNC_TYPE_C: i32 = 1;
 pub const FUNC_TYPE_F: i32 = 2;
+pub const FUNC_TYPE_JIT: i32 = 3;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
