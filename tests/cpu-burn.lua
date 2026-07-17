@@ -11,11 +11,11 @@
 jit.off()
 jit.flush()
 
-local work_iters = tonumber(os.getenv("LUA_FLAME_WORK_ITERS")) or 200000
-local fib_n = tonumber(os.getenv("LUA_FLAME_FIB_N")) or 15
-local sum_n = tonumber(os.getenv("LUA_FLAME_SUM_N")) or 40
-local scan_n = tonumber(os.getenv("LUA_FLAME_SCAN_N")) or 24
-local round_n = tonumber(os.getenv("LUA_FLAME_ROUND_N")) or 6
+local work_iters = tonumber(os.getenv("LUAJIT2_FLAME_RS_WORK_ITERS")) or 200000
+local fib_n = tonumber(os.getenv("LUAJIT2_FLAME_RS_FIB_N")) or 15
+local sum_n = tonumber(os.getenv("LUAJIT2_FLAME_RS_SUM_N")) or 40
+local scan_n = tonumber(os.getenv("LUAJIT2_FLAME_RS_SCAN_N")) or 24
+local round_n = tonumber(os.getenv("LUAJIT2_FLAME_RS_ROUND_N")) or 6
 
 -- Recursive fibonacci (call-heavy, shows nested Lua frames).
 local function fib(n)

@@ -1,5 +1,5 @@
 [package]
-name = "lua-flame"
+name = "luajit2-flame-rs"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.77"
@@ -7,7 +7,7 @@ description = "eBPF-based LuaJIT2 flame graph profiler (Rust user space)"
 license = "BSD-2-Clause"
 
 [[bin]]
-name = "lua-flame"
+name = "luajit2-flame-rs"
 path = "src/main.rs"
 
 [dependencies]

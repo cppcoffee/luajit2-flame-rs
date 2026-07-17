@@ -16,7 +16,7 @@ jobs:
     name: Test
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout lua-flame-rs
+      - name: Checkout luajit2-flame-rs
         uses: actions/checkout@v4
 
       - name: Checkout LuaJIT2
@@ -71,6 +71,6 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lua-flame-${{ runner.os }}-${{ runner.arch }}
-          path: target/release/lua-flame
+          name: luajit2-flame-rs-${{ runner.os }}-${{ runner.arch }}
+          path: target/release/luajit2-flame-rs
           if-no-files-found: error

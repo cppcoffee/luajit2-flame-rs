@@ -12,7 +12,8 @@ fn harness_runs_against_local_luajit2() {
         return;
     }
 
-    let temp = std::env::temp_dir().join(format!("lua-flame-harness-{}", std::process::id()));
+    let temp =
+        std::env::temp_dir().join(format!("luajit2-flame-rs-harness-{}", std::process::id()));
     let lib_dir = temp.join("lib");
     std::fs::create_dir_all(&lib_dir).expect("failed to create temporary lib dir");
     let linked_luajit = lib_dir.join("libluajit.so");
@@ -40,10 +41,10 @@ fn harness_runs_against_local_luajit2() {
 
     let output = Command::new(&out)
         .arg(repo.join("tests/cpu-burn.lua"))
-        .env("LUA_FLAME_HARNESS_ITERS", "3")
-        .env("LUA_FLAME_WORK_ITERS", "100")
-        .env("LUA_FLAME_FIB_N", "5")
-        .env("LUA_FLAME_SUM_N", "10")
+        .env("LUAJIT2_FLAME_RS_HARNESS_ITERS", "3")
+        .env("LUAJIT2_FLAME_RS_WORK_ITERS", "100")
+        .env("LUAJIT2_FLAME_RS_FIB_N", "5")
+        .env("LUAJIT2_FLAME_RS_SUM_N", "10")
         .output()
         .expect("failed to run harness");
     assert!(

@@ -1,4 +1,4 @@
-//! lua-flame: eBPF-based LuaJIT2 CPU flame-graph profiler.
+//! luajit2-flame-rs: eBPF-based LuaJIT2 CPU flame-graph profiler.
 
 mod perf;
 mod syms;
@@ -337,7 +337,7 @@ fn write_folded(folded: &HashMap<String, u64>, out: &std::path::Path) -> Result<
 fn make_svg(folded: &std::path::Path, svg: &std::path::Path) -> Result<()> {
     use inferno::flamegraph::{from_files, Options};
     let mut opts = Options::default();
-    opts.title = "lua-flame (LuaJIT only)".to_string();
+    opts.title = "luajit2-flame-rs (LuaJIT only)".to_string();
     from_files(
         &mut opts,
         &[folded.to_path_buf()],

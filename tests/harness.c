@@ -27,7 +27,7 @@ static long env_long(const char *name, long default_value) {
 
 int main(int argc, char **argv) {
     const char *script = (argc > 1) ? argv[1] : "cpu-burn.lua";
-    long max_iters = env_long("LUA_FLAME_HARNESS_ITERS", 1000000000L);
+    long max_iters = env_long("LUAJIT2_FLAME_RS_HARNESS_ITERS", 1000000000L);
 
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);

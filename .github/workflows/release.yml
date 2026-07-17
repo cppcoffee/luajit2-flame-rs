@@ -33,7 +33,7 @@ jobs:
             rust_target: aarch64-unknown-linux-musl
 
     steps:
-      - name: Checkout lua-flame-rs
+      - name: Checkout luajit2-flame-rs
         uses: actions/checkout@v4
 
       - name: Install system dependencies
@@ -66,8 +66,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/musl-argp"
           cat > "$RUNNER_TEMP/musl-argp/argp.h" <<'EOF'
-          #ifndef LUA_FLAME_MUSL_ARGP_H
-          #define LUA_FLAME_MUSL_ARGP_H
+          #ifndef LUAJIT2_FLAME_RS_MUSL_ARGP_H
+          #define LUAJIT2_FLAME_RS_MUSL_ARGP_H
 
           #include <errno.h>
           #include <stdio.h>
@@ -186,7 +186,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.rust_target }}/release/lua-flame"
+          binary="target/${{ matrix.rust_target }}/release/luajit2-flame-rs"
           file "$binary"
           if readelf -l "$binary" | grep -q ' INTERP '; then
             echo "::error::$binary contains a dynamic interpreter"
@@ -202,9 +202,9 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME//\//-}"
-          package="lua-flame-${version}-${{ matrix.rust_target }}"
+          package="luajit2-flame-rs-${version}-${{ matrix.rust_target }}"
           mkdir -p "dist/${package}"
-          cp "target/${{ matrix.rust_target }}/release/lua-flame" "dist/${package}/"
+          cp "target/${{ matrix.rust_target }}/release/luajit2-flame-rs" "dist/${package}/"
           cp README.md "dist/${package}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
           sha256sum "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
@@ -212,7 +212,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lua-flame-${{ matrix.rust_target }}
+          name: luajit2-flame-rs-${{ matrix.rust_target }}
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256

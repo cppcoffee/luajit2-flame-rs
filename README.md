@@ -1,11 +1,11 @@
-# lua-flame
+# luajit2-flame-rs
 
-`lua-flame` is an eBPF-based CPU flame graph profiler for LuaJIT 2.x. It is
+`luajit2-flame-rs` is an eBPF-based CPU flame graph profiler for LuaJIT 2.x. It is
 written in Rust for user space and C for the eBPF program, and it can resolve
 LuaJIT interpreter frames down to `source:line` while preserving native C frames
 in mixed stacks.
 
-![Example lua-flame output](docs/example-flamegraph.svg)
+![Example luajit2-flame-rs output](docs/example-flamegraph.svg)
 
 The image above is a representative Lua-only flame graph generated from the
 bundled `tests/cpu-burn.lua` workload.
@@ -20,7 +20,7 @@ bundled `tests/cpu-burn.lua` workload.
 
 ## Requirements
 
-`lua-flame` currently targets Linux only.
+`luajit2-flame-rs` currently targets Linux only.
 
 Runtime requirements:
 
@@ -54,7 +54,7 @@ cat /proc/sys/kernel/perf_event_paranoid
 echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
 
 # Profile a running LuaJIT process for 10 seconds.
-sudo ./target/release/lua-flame -p <PID> -d 10 -o folded.txt
+sudo ./target/release/luajit2-flame-rs -p <PID> -d 10 -o folded.txt
 ```
 
 The command writes:
@@ -69,16 +69,16 @@ Open `folded.svg` in a browser to inspect the result.
 The only required flag is `-p/--pid`:
 
 ```sh
-sudo ./target/release/lua-flame -p 1234
+sudo ./target/release/luajit2-flame-rs -p 1234
 ```
 
-By default, `lua-flame` samples at 99 Hz, runs until Ctrl-C, writes folded stacks
+By default, `luajit2-flame-rs` samples at 99 Hz, runs until Ctrl-C, writes folded stacks
 to `folded.txt`, and writes the flame graph to `folded.svg`.
 
 Example bounded capture:
 
 ```sh
-sudo ./target/release/lua-flame -p 1234 -F 99 -d 10 -o folded.txt
+sudo ./target/release/luajit2-flame-rs -p 1234 -F 99 -d 10 -o folded.txt
 ```
 
 Options:
@@ -113,7 +113,7 @@ cc -O2 tests/harness.c -o /tmp/lua-harness \
 HPID=$!
 
 # Profile Lua frames for 8 seconds.
-sudo ./target/release/lua-flame -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
+sudo ./target/release/luajit2-flame-rs -p $HPID --lua-user-stacks-only -d 8 -o folded.txt
 ```
 
 You do not need to build LuaJIT with `-g` for Lua stack frames. Lua source lines
@@ -150,8 +150,8 @@ Pushing a git tag triggers the release workflow. It builds statically linked
 musl Linux artifacts on GitHub-hosted x86_64 and aarch64 runners, then uploads
 both tarballs and SHA-256 checksums to the matching GitHub Release:
 
-- `lua-flame-<tag>-x86_64-unknown-linux-musl.tar.gz`
-- `lua-flame-<tag>-aarch64-unknown-linux-musl.tar.gz`
+- `luajit2-flame-rs-<tag>-x86_64-unknown-linux-musl.tar.gz`
+- `luajit2-flame-rs-<tag>-aarch64-unknown-linux-musl.tar.gz`
 
 The release jobs build on native runners instead of cross-compiling because the
 binary embeds a libbpf-generated eBPF skeleton. libbpf, libelf, and zlib are
