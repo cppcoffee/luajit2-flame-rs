@@ -14,6 +14,8 @@ env:
   RUSTFLAGS: -D warnings
   CC_x86_64_unknown_linux_musl: musl-gcc
   CC_aarch64_unknown_linux_musl: musl-gcc
+  ac_cv_search_argp_parse: none required
+  ac_cv_search__obstack_free: none required
 
 jobs:
   build:
@@ -49,6 +51,7 @@ jobs:
             flex \
             gawk \
             libelf-dev \
+            linux-libc-dev \
             linux-tools-common \
             llvm \
             musl-tools \
@@ -57,6 +60,78 @@ jobs:
           sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" || \
             sudo apt-get install -y --no-install-recommends linux-tools-generic || \
             echo "::warning::bpftool package install failed; using checked-in bpf/vmlinux.h"
+
+      - name: Prepare musl argp shim
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/musl-argp"
+          cat > "$RUNNER_TEMP/musl-argp/argp.h" <<'EOF'
+          #ifndef LUA_FLAME_MUSL_ARGP_H
+          #define LUA_FLAME_MUSL_ARGP_H
+
+          #include <errno.h>
+          #include <stdio.h>
+
+          #ifndef __error_t_defined
+          #define __error_t_defined 1
+          typedef int error_t;
+          #endif
+
+          struct argp_option {
+            const char *name;
+            int key;
+            const char *arg;
+            int flags;
+            const char *doc;
+            int group;
+          };
+
+          struct argp_state {
+            const char *name;
+          };
+
+          struct argp_child {
+            const struct argp *argp;
+            int flags;
+            const char *header;
+            int group;
+          };
+
+          struct argp {
+            const struct argp_option *options;
+            error_t (*parser)(int key, char *arg, struct argp_state *state);
+            const char *args_doc;
+            const char *doc;
+            const struct argp_child *children;
+            char *(*help_filter)(int key, const char *text, void *input);
+            const char *argp_domain;
+          };
+
+          #define OPTION_ARG_OPTIONAL 0x1
+          #define ARGP_ERR_UNKNOWN E2BIG
+          #define ARGP_HELP_SEE 0x04
+
+          static inline void argp_help(const struct argp *argp, FILE *stream,
+                                       unsigned flags, char *name)
+          {
+            (void)argp;
+            (void)stream;
+            (void)flags;
+            (void)name;
+          }
+
+          #endif
+          EOF
+
+          rust_target="${{ matrix.rust_target }}"
+          cflags_name="CFLAGS_${rust_target//-/_}"
+          multiarch="$(gcc -print-multiarch 2>/dev/null || true)"
+          cflags="-I$RUNNER_TEMP/musl-argp"
+          if [ -n "$multiarch" ] && [ -d "/usr/include/$multiarch" ]; then
+            cflags="$cflags -idirafter /usr/include/$multiarch"
+          fi
+          cflags="$cflags -idirafter /usr/include"
+          echo "${cflags_name}=$cflags" >> "$GITHUB_ENV"
 
       - name: Regenerate architecture BTF header
         run: |
