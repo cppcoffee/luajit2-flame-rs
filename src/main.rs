@@ -155,19 +155,6 @@ fn main() -> Result<()> {
     let p2 = pending.clone();
     let mut callback_unwinder = user_unwinder;
 
-    // We don't symbolize inside the perf-buffer callbacks (the Symbolizer is
-    // not Sync and the Source references a PID). Instead, the callbacks stash
-    // raw events; symbolization happens in the finalization pass on the main
-    // thread. So we don't need a Symbolizer here at all.
-    let _src_unused = Source::Process(Process {
-        pid: (args.pid as u32).into(),
-        debug_syms: false,
-        perf_map: false,
-        map_files: false,
-        vdso: false,
-        _non_exhaustive: (),
-    });
-
     let pb_native: PerfBuffer = PerfBufferBuilder::new(&skel.maps.native_events)
         .pages(64)
         .sample_cb(move |_cpu, data: &[u8]| {
