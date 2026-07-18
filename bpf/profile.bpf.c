@@ -4,8 +4,8 @@
  * Two independent output streams, both keyed by a per-sample nonce so user
  * space can correlate them:
  *
- *   1. do_perf_event: bpf_get_stack() reads native user IPs into a stack
- *      buffer and emits one `native_event` (IPs leaf-first).
+ *   1. do_perf_event: captures user registers and stack bytes for DWARF
+ *      unwinding, plus bpf_get_stack() IPs as a per-sample fallback.
  *   2. walk_lua_stack: emits one `lua_stack_event` per LuaJIT frame.
  *
  * Both carry the same (pid, tid, seq) so the user-space aggregator
@@ -21,6 +21,7 @@
 const volatile bool kernel_stacks_only       = false;
 const volatile bool user_stacks_only         = false;
 const volatile bool disable_lua_user_trace   = false;
+const volatile bool collect_native_stacks    = false;
 const volatile bool include_idle             = false;
 const volatile pid_t targ_pid                = -1;
 const volatile pid_t targ_tid                = -1;
@@ -261,6 +262,45 @@ static __always_inline void get_pid_tid(u32 *pid, u32 *tid)
 	*tid = (u32)id;
 }
 
+static __always_inline u32 read_user_stack_snapshot(struct native_event *event)
+{
+	u32 bytes_read = 0;
+
+	#pragma unroll
+	for (u32 offset = 0; offset < USER_STACK_SNAPSHOT_SIZE;
+	     offset += USER_STACK_SNAPSHOT_CHUNK_SIZE) {
+		if (bpf_probe_read_user(event->stack + offset,
+		                        USER_STACK_SNAPSHOT_CHUNK_SIZE,
+		                        (const void *)(event->sp + offset)) != 0)
+			break;
+		bytes_read += USER_STACK_SNAPSHOT_CHUNK_SIZE;
+	}
+
+	/* A stack pointer can be less than one chunk below the mapping boundary.
+	 * Preserve a useful prefix instead of dropping the entire snapshot. */
+	if (bytes_read == 0) {
+		if (bpf_probe_read_user(event->stack, 256,
+		                        (const void *)event->sp) == 0)
+			return 256;
+		if (bpf_probe_read_user(event->stack, 128,
+		                        (const void *)event->sp) == 0)
+			return 128;
+		if (bpf_probe_read_user(event->stack, 64,
+		                        (const void *)event->sp) == 0)
+			return 64;
+		if (bpf_probe_read_user(event->stack, 32,
+		                        (const void *)event->sp) == 0)
+			return 32;
+		if (bpf_probe_read_user(event->stack, 16,
+		                        (const void *)event->sp) == 0)
+			return 16;
+		if (bpf_probe_read_user(event->stack, 8,
+		                        (const void *)event->sp) == 0)
+			return 8;
+	}
+	return bytes_read;
+}
+
 /* bump & fetch the per-tid sample sequence number */
 static __always_inline u32 next_seq(u32 tid)
 {
@@ -299,11 +339,29 @@ int do_perf_event(struct bpf_perf_event_data *ctx)
 				ne->key.pid = pid;
 				ne->key.tid = tid;
 				ne->key.seq = seq;
+			ne->stack_len = 0;
+			ne->ip = 0;
+			ne->sp = 0;
+			ne->fp = 0;
+			ne->lr = 0;
 			long n = bpf_get_stack(ctx, ne->ips, sizeof(ne->ips),
 			                       BPF_F_USER_STACK);
 			ne->ip_cnt = n > 0 ? n / sizeof(u64) : 0;
-			bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU,
-			                      ne, sizeof(*ne));
+			if (collect_native_stacks) {
+				ne->ip = PT_REGS_IP(&ctx->regs);
+				ne->sp = PT_REGS_SP(&ctx->regs);
+				ne->fp = PT_REGS_FP(&ctx->regs);
+			#if defined(__TARGET_ARCH_arm64)
+				ne->lr = PT_REGS_RET(&ctx->regs);
+			#endif
+				if (ne->sp)
+					ne->stack_len = read_user_stack_snapshot(ne);
+				bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU,
+				                      ne, sizeof(*ne));
+			} else {
+				bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU,
+				                      ne, __builtin_offsetof(struct native_event, stack));
+			}
 		}
 	}
 

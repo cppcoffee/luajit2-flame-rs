@@ -19,6 +19,8 @@ blazesym     = "0.2"
 inferno      = { version = "0.11", default-features = false }
 anyhow       = "1"
 plain        = "0.2"
+framehop     = { version = "0.15.0", default-features = false, features = ["std"] }
+object       = { version = "0.39.1", default-features = false, features = ["read_core", "elf", "std"] }
 
 [build-dependencies]
 libbpf-cargo = "0.24"

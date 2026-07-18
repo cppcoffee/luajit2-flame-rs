@@ -3,6 +3,7 @@
 mod perf;
 mod syms;
 mod types;
+mod unwind;
 
 use anyhow::{anyhow, Context, Result};
 use blazesym::symbolize::source::{Process, Source};
@@ -21,6 +22,7 @@ use std::time::Duration;
 use types::{
     LuaStackEvent, NativeEvent, SampleKey, FUNC_TYPE_C, FUNC_TYPE_F, FUNC_TYPE_JIT, FUNC_TYPE_LUA,
 };
+use unwind::{NativeSample, UserUnwinder};
 
 mod profile {
     include!(concat!(env!("OUT_DIR"), "/profile.skel.rs"));
@@ -49,6 +51,14 @@ struct Args {
 
 static EXITING: AtomicBool = AtomicBool::new(false);
 
+#[derive(Default)]
+struct NativeUnwindStats {
+    succeeded: u64,
+    fallback: u64,
+    snapshot_truncated: u64,
+    depth_limited: u64,
+}
+
 /// Aggregated in-flight samples keyed by (pid, tid, seq).
 #[derive(Default)]
 struct Pending {
@@ -56,10 +66,12 @@ struct Pending {
     lua: HashMap<SampleKey, Vec<LuaStackEvent>>,
     /// completed folded stacks -> counts
     folded: HashMap<String, u64>,
+    unwind_stats: NativeUnwindStats,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let include_native_stacks = args.include_c_stacks || args.disable_lua;
 
     let (lib_path, _base) = syms::find_luajit(args.pid)
         .with_context(|| format!("locating luajit for pid {}", args.pid))?;
@@ -74,6 +86,26 @@ fn main() -> Result<()> {
         offs.lua_yield
     );
 
+    let user_unwinder = if include_native_stacks {
+        match UserUnwinder::new(args.pid) {
+            Ok(unwinder) => {
+                println!(
+                    "[+] loaded DWARF unwind data for {} native modules",
+                    unwinder.module_count()
+                );
+                Some(unwinder)
+            }
+            Err(error) => {
+                eprintln!(
+                    "[!] user-space DWARF unwinder unavailable: {error:#}; using bpf_get_stack fallback"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     bump_memlock_rlimit()?;
 
     let mut object = MaybeUninit::<libbpf_rs::OpenObject>::uninit();
@@ -82,6 +114,7 @@ fn main() -> Result<()> {
     open_skel.maps.rodata_data.targ_tid = -1;
     open_skel.maps.rodata_data.user_stacks_only = args.user_stacks_only;
     open_skel.maps.rodata_data.disable_lua_user_trace = args.disable_lua;
+    open_skel.maps.rodata_data.collect_native_stacks = include_native_stacks;
     let skel = open_skel.load()?;
 
     // uprobes
@@ -107,13 +140,20 @@ fn main() -> Result<()> {
     let nr_cpus = libbpf_rs::num_possible_cpus()?;
     let mut perf_links: Vec<libbpf_rs::Link> = Vec::new();
     for cpu in 0..nr_cpus as i32 {
-        let fd = perf::open_cpu_clock(args.frequency, cpu)?;
+        // Offline unwinding needs the sampled registers and stack snapshot to
+        // come from the same user-mode context.
+        let fd = perf::open_cpu_clock(
+            args.frequency,
+            cpu,
+            args.user_stacks_only || include_native_stacks,
+        )?;
         perf_links.push(skel.progs.do_perf_event.attach_perf_event(fd)?);
     }
 
     let pending = Arc::new(Mutex::new(Pending::default()));
     let p1 = pending.clone();
     let p2 = pending.clone();
+    let mut callback_unwinder = user_unwinder;
 
     // We don't symbolize inside the perf-buffer callbacks (the Symbolizer is
     // not Sync and the Source references a PID). Instead, the callbacks stash
@@ -131,8 +171,8 @@ fn main() -> Result<()> {
     let pb_native: PerfBuffer = PerfBufferBuilder::new(&skel.maps.native_events)
         .pages(64)
         .sample_cb(move |_cpu, data: &[u8]| {
-            if let Some(ne) = from_bytes_aligned::<NativeEvent>(data) {
-                handle_native(&ne, &p1);
+            if let Some(ne) = native_event_from_bytes(data) {
+                handle_native(&ne, &p1, callback_unwinder.as_mut(), include_native_stacks);
             }
         })
         .build()?;
@@ -180,13 +220,22 @@ fn main() -> Result<()> {
         });
         let sym = Symbolizer::new();
         let mut g = pending.lock().unwrap();
-        let include_c_stacks = args.include_c_stacks || args.disable_lua;
         let native = std::mem::take(&mut g.native);
         for (seq, ips) in native {
             let lua = g.lua.remove(&seq).unwrap_or_default();
-            if let Some(stack) = build_stack(&ips, &lua, &src, &sym, include_c_stacks) {
+            if let Some(stack) = build_stack(&ips, &lua, &src, &sym, include_native_stacks) {
                 *g.folded.entry(stack).or_insert(0) += 1;
             }
+        }
+        if include_native_stacks {
+            println!(
+                "[+] user-space DWARF unwind: {} succeeded, {} fell back, {} snapshots exhausted, {} hit the {}-frame limit",
+                g.unwind_stats.succeeded,
+                g.unwind_stats.fallback,
+                g.unwind_stats.snapshot_truncated,
+                g.unwind_stats.depth_limited,
+                types::PERF_MAX_STACK_DEPTH
+            );
         }
         std::mem::take(&mut g.folded)
     };
@@ -224,11 +273,54 @@ fn from_bytes_aligned<T: plain::Plain + Default>(data: &[u8]) -> Option<T> {
     Some(val)
 }
 
-fn handle_native(ne: &NativeEvent, p: &Mutex<Pending>) {
-    let cnt = ne.ip_cnt.min(types::PERF_MAX_STACK_DEPTH as u32) as usize;
+fn native_event_from_bytes(data: &[u8]) -> Option<NativeEvent> {
+    let prefix_size = std::mem::size_of::<NativeEvent>() - types::USER_STACK_SNAPSHOT_SIZE;
+    if data.len() < prefix_size {
+        return None;
+    }
+    let mut event = NativeEvent::default();
+    let copy_len = data.len().min(std::mem::size_of::<NativeEvent>());
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            data.as_ptr(),
+            &mut event as *mut NativeEvent as *mut u8,
+            copy_len,
+        );
+    }
+    event.stack_len = event
+        .stack_len
+        .min(data.len().saturating_sub(prefix_size) as u32);
+    Some(event)
+}
+
+fn handle_native(
+    ne: &NativeEvent,
+    p: &Mutex<Pending>,
+    unwinder: Option<&mut UserUnwinder>,
+    collect_native_stacks: bool,
+) {
+    let sample = NativeSample::from_event(ne);
+    let (ips, unwind_result) = if let Some(unwinder) = unwinder {
+        let attempt = unwinder.unwind(&sample);
+        let succeeded = attempt.ips.is_some();
+        let ips = attempt.ips.unwrap_or_else(|| sample.fallback_ips.to_vec());
+        (
+            ips,
+            Some((succeeded, attempt.snapshot_truncated, attempt.depth_limited)),
+        )
+    } else {
+        (sample.fallback_ips.to_vec(), None)
+    };
     let mut g = p.lock().unwrap();
-    let ips: Vec<u64> = ne.ips[..cnt].to_vec();
     g.native.insert(ne.key, ips);
+    if let Some((succeeded, snapshot_truncated, depth_limited)) = unwind_result {
+        g.unwind_stats.succeeded += u64::from(succeeded);
+        g.unwind_stats.fallback += u64::from(!succeeded);
+        g.unwind_stats.snapshot_truncated += u64::from(snapshot_truncated);
+        g.unwind_stats.depth_limited += u64::from(depth_limited);
+    } else if collect_native_stacks {
+        g.unwind_stats.fallback += 1;
+    }
 }
 
 fn handle_lua(le: LuaStackEvent, p: &Mutex<Pending>) {
@@ -251,7 +343,7 @@ fn build_stack(
                 continue;
             }
             match sym.symbolize_single(src, Input::AbsAddr(ip)) {
-                Ok(Symbolized::Sym(s)) if !s.name.is_empty() => {
+                Ok(Symbolized::Sym(s)) if is_native_function_symbol(&s.name) => {
                     native_frames.push(Some(format!("{}+{:#x}", s.name, s.offset)));
                 }
                 _ => native_frames.push(None),
@@ -259,6 +351,22 @@ fn build_stack(
         }
     }
     fold_symbolized_stack(&native_frames, lua, include_c_stacks)
+}
+
+fn is_native_function_symbol(name: &str) -> bool {
+    !name.is_empty()
+        && !matches!(
+            name,
+            "$a" | "$d" | "$t" | "$x" | "$a.0" | "$d.0" | "$t.0" | "$x.0"
+        )
+        && !name
+            .strip_prefix('$')
+            .and_then(|name| name.split_once('.'))
+            .is_some_and(|(kind, suffix)| {
+                matches!(kind, "a" | "d" | "t" | "x")
+                    && !suffix.is_empty()
+                    && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            })
 }
 
 fn fold_symbolized_stack(
@@ -466,6 +574,16 @@ mod tests {
     }
 
     #[test]
+    fn arm_mapping_symbols_are_not_rendered_as_functions() {
+        for name in ["$a", "$d", "$t", "$x", "$x.0", "$d.123"] {
+            assert!(!is_native_function_symbol(name), "accepted {name}");
+        }
+        for name in ["main", "lj_vm_foldarith", "$x.data", "$custom"] {
+            assert!(is_native_function_symbol(name), "rejected {name}");
+        }
+    }
+
+    #[test]
     fn pending_uses_tid_as_part_of_sample_key() {
         let pending = Mutex::new(Pending::default());
         let k1 = SampleKey {
@@ -491,8 +609,8 @@ mod tests {
         };
         ne2.ips[0] = 0x2222;
 
-        handle_native(&ne1, &pending);
-        handle_native(&ne2, &pending);
+        handle_native(&ne1, &pending, None, false);
+        handle_native(&ne2, &pending, None, false);
         handle_lua(lua_event(k1, 0, "@one.lua", 1), &pending);
         handle_lua(lua_event(k2, 0, "@two.lua", 2), &pending);
 
@@ -501,6 +619,31 @@ mod tests {
         assert_eq!(guard.native[&k2], vec![0x2222]);
         assert_eq!(guard.lua[&k1][0].name_str(), "@one.lua");
         assert_eq!(guard.lua[&k2][0].name_str(), "@two.lua");
+    }
+
+    #[test]
+    fn native_event_parser_accepts_snapshot_free_prefix() {
+        let mut event = NativeEvent {
+            key: SampleKey {
+                pid: 1,
+                tid: 2,
+                seq: 3,
+            },
+            ip_cnt: 1,
+            ..NativeEvent::default()
+        };
+        event.ips[0] = 0x1234;
+        let prefix_size = std::mem::size_of::<NativeEvent>() - types::USER_STACK_SNAPSHOT_SIZE;
+        let bytes = unsafe {
+            std::slice::from_raw_parts(&event as *const NativeEvent as *const u8, prefix_size)
+        };
+
+        let parsed = native_event_from_bytes(bytes).unwrap();
+
+        assert_eq!(parsed.key, event.key);
+        assert_eq!(parsed.ips[0], 0x1234);
+        assert_eq!(parsed.stack_len, 0);
+        assert!(parsed.stack.iter().all(|byte| *byte == 0));
     }
 
     #[test]

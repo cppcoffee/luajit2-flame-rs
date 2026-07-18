@@ -5,10 +5,19 @@ written in Rust for user space and C for the eBPF program. It resolves interpret
 frames down to `source:line`, attributes active JIT traces to their Lua function,
 and can preserve native C frames in mixed stacks.
 
-![Example luajit2-flame-rs output](docs/example-flamegraph.svg)
+### Lua-only flame graph
 
-The image above is a representative Lua-only flame graph generated from the
-bundled `tests/cpu-burn.lua` workload.
+![Lua-only luajit2-flame-rs output](docs/example-flamegraph.svg)
+
+This graph was generated from the bundled `tests/cpu-burn.lua` workload using
+the default Lua-only output mode.
+
+### C and Lua flame graph
+
+![C and Lua luajit2-flame-rs output](docs/example-flamegraph-mixed.svg)
+
+This graph was generated from the same workload with `--include-c-stacks`, so
+native LuaJIT frames are shown together with the Lua source frames.
 
 ## Features
 
@@ -16,6 +25,8 @@ bundled `tests/cpu-burn.lua` workload.
 - Captures CPU samples with `perf_event` and eBPF.
 - Resolves Lua frames as `L:<chunkname>:<line>`.
 - Attributes JIT trace execution as `JIT:<chunkname>:<function-line>`.
+- Unwinds native C frames from captured registers and stack bytes using ELF
+  DWARF CFI, without requiring frame pointers.
 - Interleaves Lua frames with native C frames for mixed-stack analysis.
 - Writes folded stacks and an SVG flame graph.
 
@@ -120,7 +131,9 @@ Set `LUAJIT2_FLAME_RS_JIT=1` when starting the harness to exercise JIT profiling
 
 You do not need to build LuaJIT with `-g` for Lua stack frames. Lua source lines
 come from LuaJIT runtime metadata, not DWARF debug information. Debug symbols are
-only useful when you want more native symbol detail in mixed stacks.
+only useful when you want more native symbol detail in mixed stacks. Native
+unwinding uses `.eh_frame` or `.debug_frame`, which standard Linux toolchains
+normally emit even for optimized builds that omit frame pointers.
 
 ## Architecture
 
@@ -130,7 +143,8 @@ target process (nginx / OpenResty / any LuaJIT embedder)
    │  uprobe on lua_resume / lua_pcall     → capture lua_State* per tid
    │  uretprobe on lua_yield               → drop lua_State* per tid
    │  perf-event CPU clock @ N Hz          → on each sample:
-   │      • bpf_get_stack()                → native user-space IPs
+   │      • registers + user stack bytes   → offline native unwind input
+   │      • bpf_get_stack()                → fallback native IPs
    │      • walk lua_State                 → bytecode PC → source line
    │
    ▼  perf buffer
@@ -138,6 +152,7 @@ target process (nginx / OpenResty / any LuaJIT embedder)
 │ Rust user space                                          │
 │   libbpf-rs  : load skeleton, attach uprobe/perf-event   │
 │   goblin     : find lua_resume/lua_pcall offsets in ELF  │
+│   framehop   : unwind native frames from ELF DWARF CFI   │
 │   blazesym   : resolve native IPs → C symbol names       │
 │   inferno    : folded stacks → flame graph SVG           │
 └──────────────────────────────────────────────────────────┘
@@ -166,6 +181,11 @@ header if the runner does not expose a usable `bpftool`.
 
 - The Lua stack walk is bounded by `MAX_LUA_DEPTH` to keep eBPF verifier
   complexity manageable.
+- Native DWARF unwinding captures up to 4 KiB from the user stack in bounded
+  chunks and is limited to 32 frames. A sample falls back to `bpf_get_stack()`
+  when offline unwinding cannot recover a usable stack.
+- JIT-generated machine code has no ELF DWARF CFI, so its native portion uses
+  the fallback stack. LuaJIT runtime metadata still provides the `JIT:` frame.
 - `L:` interpreter frames identify the sampled source line. `JIT:` frames identify
   the materialized Lua function running on a trace; optimized inline frames and the
   exact source line within a trace are not reconstructed.

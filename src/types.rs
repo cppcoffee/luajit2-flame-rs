@@ -4,6 +4,7 @@ use plain::Plain;
 
 pub const CHUNKNAME_LEN: usize = 128;
 pub const PERF_MAX_STACK_DEPTH: usize = 32;
+pub const USER_STACK_SNAPSHOT_SIZE: usize = 4096;
 
 pub const FUNC_TYPE_LUA: i32 = 0;
 pub const FUNC_TYPE_C: i32 = 1;
@@ -23,7 +24,13 @@ pub struct SampleKey {
 pub struct NativeEvent {
     pub key: SampleKey,
     pub ip_cnt: u32,
+    pub stack_len: u32,
+    pub ip: u64,
+    pub sp: u64,
+    pub fp: u64,
+    pub lr: u64,
     pub ips: [u64; PERF_MAX_STACK_DEPTH],
+    pub stack: [u8; USER_STACK_SNAPSHOT_SIZE],
 }
 
 impl Default for NativeEvent {
@@ -31,7 +38,13 @@ impl Default for NativeEvent {
         Self {
             key: SampleKey::default(),
             ip_cnt: 0,
+            stack_len: 0,
+            ip: 0,
+            sp: 0,
+            fp: 0,
+            lr: 0,
             ips: [0; PERF_MAX_STACK_DEPTH],
+            stack: [0; USER_STACK_SNAPSHOT_SIZE],
         }
     }
 }

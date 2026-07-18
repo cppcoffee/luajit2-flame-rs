@@ -6,6 +6,8 @@
 #define CHUNKNAME_LEN   128
 #define MAX_LUA_DEPTH   8
 #define PERF_MAX_STACK_DEPTH 32
+#define USER_STACK_SNAPSHOT_SIZE 4096
+#define USER_STACK_SNAPSHOT_CHUNK_SIZE 512
 
 enum func_type {
 	FUNC_TYPE_LUA = 0,
@@ -14,18 +16,24 @@ enum func_type {
 	FUNC_TYPE_JIT = 3,
 };
 
-/* native (user-space) stack sample. bpf_get_stack fills `ips` leaf-first. */
 struct sample_key {
 	unsigned int pid;
 	unsigned int tid;
 	unsigned int seq;          /* per-tid sample sequence */
 };
 
-/* native (user-space) stack sample. bpf_get_stack fills `ips` leaf-first. */
+/* Native stack input. bpf_get_stack fills `ips` leaf-first; registers and
+ * stack bytes are used for user-space DWARF unwinding. */
 struct native_event {
 	struct sample_key key;     /* correlates with lua_stack_event.key */
 	unsigned int ip_cnt;
+	unsigned int stack_len;
+	unsigned long long ip;
+	unsigned long long sp;
+	unsigned long long fp;
+	unsigned long long lr;
 	unsigned long long ips[PERF_MAX_STACK_DEPTH];
+	unsigned char stack[USER_STACK_SNAPSHOT_SIZE];
 };
 
 /* one walked LuaJIT frame. */
