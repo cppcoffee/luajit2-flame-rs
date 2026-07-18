@@ -12,7 +12,8 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-static long env_long(const char *name, long default_value) {
+static long env_long(const char *name, long default_value)
+{
     const char *value = getenv(name);
     if (!value || !*value) {
         return default_value;
@@ -25,7 +26,8 @@ static long env_long(const char *name, long default_value) {
     return parsed;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     const char *script = (argc > 1) ? argv[1] : "cpu-burn.lua";
     long max_iters = env_long("LUAJIT2_FLAME_RS_HARNESS_ITERS", 1000000000L);
 
