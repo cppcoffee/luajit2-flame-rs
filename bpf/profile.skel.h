@@ -9,172 +9,170 @@
 #include <bpf/libbpf.h>
 
 struct profile_bpf {
-	struct bpf_object_skeleton *skeleton;
-	struct bpf_object *obj;
-	struct {
-		struct bpf_map *stackmap;
-		struct bpf_map *counts;
-		struct bpf_map *lua_events;
-		struct bpf_map *lua_event_output;
-		struct bpf_map *rodata;
-	} maps;
-	struct {
-		struct bpf_program *do_perf_event;
-		struct bpf_program *handle_entry_lua;
-		struct bpf_program *handle_entry_lua_cancel;
-	} progs;
-	struct {
-		struct bpf_link *do_perf_event;
-		struct bpf_link *handle_entry_lua;
-		struct bpf_link *handle_entry_lua_cancel;
-	} links;
-	struct profile_bpf__rodata {
-		bool kernel_stacks_only;
-		bool user_stacks_only;
-		bool disable_lua_user_trace;
-		bool include_idle;
-		pid_t targ_pid;
-		pid_t targ_tid;
-		int stack_depth_limit;
-	} *rodata;
+    struct bpf_object_skeleton *skeleton;
+    struct bpf_object *obj;
+    struct {
+        struct bpf_map *stackmap;
+        struct bpf_map *counts;
+        struct bpf_map *lua_events;
+        struct bpf_map *lua_event_output;
+        struct bpf_map *rodata;
+    } maps;
+    struct {
+        struct bpf_program *do_perf_event;
+        struct bpf_program *handle_entry_lua;
+        struct bpf_program *handle_entry_lua_cancel;
+    } progs;
+    struct {
+        struct bpf_link *do_perf_event;
+        struct bpf_link *handle_entry_lua;
+        struct bpf_link *handle_entry_lua_cancel;
+    } links;
+    struct profile_bpf__rodata {
+        bool kernel_stacks_only;
+        bool user_stacks_only;
+        bool disable_lua_user_trace;
+        bool include_idle;
+        pid_t targ_pid;
+        pid_t targ_tid;
+        int stack_depth_limit;
+    } *rodata;
 };
 
-static void
-profile_bpf__destroy(struct profile_bpf *obj)
+static void profile_bpf__destroy(struct profile_bpf *obj)
 {
-	if (!obj)
-		return;
-	if (obj->skeleton)
-		bpf_object__destroy_skeleton(obj->skeleton);
-	free(obj);
+    if (!obj) {
+        return;
+    }
+    if (obj->skeleton) {
+        bpf_object__destroy_skeleton(obj->skeleton);
+    }
+    free(obj);
 }
 
-static inline int
-profile_bpf__create_skeleton(struct profile_bpf *obj);
+static inline int profile_bpf__create_skeleton(struct profile_bpf *obj);
 
-static inline struct profile_bpf *
-profile_bpf__open_opts(const struct bpf_object_open_opts *opts)
+static inline struct profile_bpf *profile_bpf__open_opts(const struct bpf_object_open_opts *opts)
 {
-	struct profile_bpf *obj;
-	int err;
+    struct profile_bpf *obj;
+    int err;
 
-	obj = (struct profile_bpf *)calloc(1, sizeof(*obj));
-	if (!obj) {
-		errno = ENOMEM;
-		return NULL;
-	}
+    obj = (struct profile_bpf *)calloc(1, sizeof(*obj));
+    if (!obj) {
+        errno = ENOMEM;
+        return NULL;
+    }
 
-	err = profile_bpf__create_skeleton(obj);
-	err = err ?: bpf_object__open_skeleton(obj->skeleton, opts);
-	if (err)
-		goto err_out;
+    err = profile_bpf__create_skeleton(obj);
+    err = err ?: bpf_object__open_skeleton(obj->skeleton, opts);
+    if (err) {
+        goto err_out;
+    }
 
-	return obj;
+    return obj;
 err_out:
-	profile_bpf__destroy(obj);
-	errno = -err;
-	return NULL;
+    profile_bpf__destroy(obj);
+    errno = -err;
+    return NULL;
 }
 
-static inline struct profile_bpf *
-profile_bpf__open(void)
+static inline struct profile_bpf *profile_bpf__open(void)
 {
-	return profile_bpf__open_opts(NULL);
+    return profile_bpf__open_opts(NULL);
 }
 
-static inline int
-profile_bpf__load(struct profile_bpf *obj)
+static inline int profile_bpf__load(struct profile_bpf *obj)
 {
-	return bpf_object__load_skeleton(obj->skeleton);
+    return bpf_object__load_skeleton(obj->skeleton);
 }
 
-static inline struct profile_bpf *
-profile_bpf__open_and_load(void)
+static inline struct profile_bpf *profile_bpf__open_and_load(void)
 {
-	struct profile_bpf *obj;
-	int err;
+    struct profile_bpf *obj;
+    int err;
 
-	obj = profile_bpf__open();
-	if (!obj)
-		return NULL;
-	err = profile_bpf__load(obj);
-	if (err) {
-		profile_bpf__destroy(obj);
-		errno = -err;
-		return NULL;
-	}
-	return obj;
+    obj = profile_bpf__open();
+    if (!obj) {
+        return NULL;
+    }
+    err = profile_bpf__load(obj);
+    if (err) {
+        profile_bpf__destroy(obj);
+        errno = -err;
+        return NULL;
+    }
+    return obj;
 }
 
-static inline int
-profile_bpf__attach(struct profile_bpf *obj)
+static inline int profile_bpf__attach(struct profile_bpf *obj)
 {
-	return bpf_object__attach_skeleton(obj->skeleton);
+    return bpf_object__attach_skeleton(obj->skeleton);
 }
 
-static inline void
-profile_bpf__detach(struct profile_bpf *obj)
+static inline void profile_bpf__detach(struct profile_bpf *obj)
 {
-	return bpf_object__detach_skeleton(obj->skeleton);
+    return bpf_object__detach_skeleton(obj->skeleton);
 }
 
-static inline int
-profile_bpf__create_skeleton(struct profile_bpf *obj)
+static inline int profile_bpf__create_skeleton(struct profile_bpf *obj)
 {
-	struct bpf_object_skeleton *s;
+    struct bpf_object_skeleton *s;
 
-	s = (struct bpf_object_skeleton *)calloc(1, sizeof(*s));
-	if (!s)
-		goto err;
+    s = (struct bpf_object_skeleton *)calloc(1, sizeof(*s));
+    if (!s) {
+        goto err;
+    }
 
-	s->sz = sizeof(*s);
-	s->name = "profile_bpf";
-	s->obj = &obj->obj;
+    s->sz = sizeof(*s);
+    s->name = "profile_bpf";
+    s->obj = &obj->obj;
 
-	/* maps */
-	s->map_cnt = 5;
-	s->map_skel_sz = sizeof(*s->maps);
-	s->maps = (struct bpf_map_skeleton *)calloc(s->map_cnt, s->map_skel_sz);
-	if (!s->maps)
-		goto err;
+    /* maps */
+    s->map_cnt = 5;
+    s->map_skel_sz = sizeof(*s->maps);
+    s->maps = (struct bpf_map_skeleton *)calloc(s->map_cnt, s->map_skel_sz);
+    if (!s->maps) {
+        goto err;
+    }
 
-	s->maps[0].name = "stackmap";
-	s->maps[0].map = &obj->maps.stackmap;
+    s->maps[0].name = "stackmap";
+    s->maps[0].map = &obj->maps.stackmap;
 
-	s->maps[1].name = "counts";
-	s->maps[1].map = &obj->maps.counts;
+    s->maps[1].name = "counts";
+    s->maps[1].map = &obj->maps.counts;
 
-	s->maps[2].name = "lua_events";
-	s->maps[2].map = &obj->maps.lua_events;
+    s->maps[2].name = "lua_events";
+    s->maps[2].map = &obj->maps.lua_events;
 
-	s->maps[3].name = "lua_event_output";
-	s->maps[3].map = &obj->maps.lua_event_output;
+    s->maps[3].name = "lua_event_output";
+    s->maps[3].map = &obj->maps.lua_event_output;
 
-	s->maps[4].name = "profile_.rodata";
-	s->maps[4].map = &obj->maps.rodata;
-	s->maps[4].mmaped = (void **)&obj->rodata;
+    s->maps[4].name = "profile_.rodata";
+    s->maps[4].map = &obj->maps.rodata;
+    s->maps[4].mmaped = (void **)&obj->rodata;
 
-	/* programs */
-	s->prog_cnt = 3;
-	s->prog_skel_sz = sizeof(*s->progs);
-	s->progs = (struct bpf_prog_skeleton *)calloc(s->prog_cnt, s->prog_skel_sz);
-	if (!s->progs)
-		goto err;
+    /* programs */
+    s->prog_cnt = 3;
+    s->prog_skel_sz = sizeof(*s->progs);
+    s->progs = (struct bpf_prog_skeleton *)calloc(s->prog_cnt, s->prog_skel_sz);
+    if (!s->progs) {
+        goto err;
+    }
 
-	s->progs[0].name = "do_perf_event";
-	s->progs[0].prog = &obj->progs.do_perf_event;
-	s->progs[0].link = &obj->links.do_perf_event;
+    s->progs[0].name = "do_perf_event";
+    s->progs[0].prog = &obj->progs.do_perf_event;
+    s->progs[0].link = &obj->links.do_perf_event;
 
-	s->progs[1].name = "handle_entry_lua";
-	s->progs[1].prog = &obj->progs.handle_entry_lua;
-	s->progs[1].link = &obj->links.handle_entry_lua;
+    s->progs[1].name = "handle_entry_lua";
+    s->progs[1].prog = &obj->progs.handle_entry_lua;
+    s->progs[1].link = &obj->links.handle_entry_lua;
 
-	s->progs[2].name = "handle_entry_lua_cancel";
-	s->progs[2].prog = &obj->progs.handle_entry_lua_cancel;
-	s->progs[2].link = &obj->links.handle_entry_lua_cancel;
+    s->progs[2].name = "handle_entry_lua_cancel";
+    s->progs[2].prog = &obj->progs.handle_entry_lua_cancel;
+    s->progs[2].link = &obj->links.handle_entry_lua_cancel;
 
-	s->data_sz = 42264;
-	s->data = (void *)"\
+    s->data_sz = 42264;
+    s->data = (void *)"\
 \x7f\x45\x4c\x46\x02\x01\x01\0\0\0\0\0\0\0\0\0\x01\0\xf7\0\x01\0\0\0\0\0\0\0\0\
 \0\0\0\0\0\0\0\0\0\0\0\xd8\x9c\0\0\0\0\0\0\0\0\0\0\x40\0\0\0\0\0\x40\0\x21\0\
 \x01\0\xbf\x18\0\0\0\0\0\0\x85\0\0\0\x0e\0\0\0\xbc\x06\0\0\0\0\0\0\x18\x01\0\0\
@@ -1858,11 +1856,11 @@ profile_bpf__create_skeleton(struct profile_bpf *obj)
 \0\0\xcd\x01\0\0\x02\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\xe0\x75\0\0\0\0\0\0\
 \xb8\x02\0\0\0\0\0\0\x01\0\0\0\x0e\0\0\0\x08\0\0\0\0\0\0\0\x18\0\0\0\0\0\0\0";
 
-	obj->skeleton = s;
-	return 0;
+    obj->skeleton = s;
+    return 0;
 err:
-	bpf_object__destroy_skeleton(s);
-	return -ENOMEM;
+    bpf_object__destroy_skeleton(s);
+    return -ENOMEM;
 }
 
 #endif /* __PROFILE_BPF_SKEL_H__ */

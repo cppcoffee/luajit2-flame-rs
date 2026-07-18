@@ -23,17 +23,16 @@
  * layout is fixed and matches the target LuaJIT build), NOT on CO-RE
  * relocation — CO-RE only works for kernel BTF types, and our lua_State /
  * GCproto are user-defined types that have no matching kernel BTF. */
-#define LUARD_T(src, field, type)                                              \
-    ({                                                                         \
-        type _v;                                                               \
-        __builtin_memset(&_v, 0, sizeof(_v));                                  \
-        bpf_probe_read_user(&_v, sizeof(_v), (const void *)&(src)->field);     \
-        _v;                                                                    \
+#define LUARD_T(src, field, type)                                                                                      \
+    ({                                                                                                                 \
+        type _v;                                                                                                       \
+        __builtin_memset(&_v, 0, sizeof(_v));                                                                          \
+        bpf_probe_read_user(&_v, sizeof(_v), (const void *)&(src)->field);                                             \
+        _v;                                                                                                            \
     })
 
 /* read into a caller-provided buffer */
-#define LUARD(dst, src, field)                                                 \
-    bpf_probe_read_user(dst, sizeof(*(dst)), (const void *)&(src)->field)
+#define LUARD(dst, src, field) bpf_probe_read_user(dst, sizeof(*(dst)), (const void *)&(src)->field)
 
 /* ---- scalar typedefs -------------------------------------------------- */
 typedef uint32_t MSize;
@@ -97,9 +96,9 @@ typedef const TValue cTValue;
 #define LJ_GCT_FUNC   8
 
 /* ---- GC header / string ----------------------------------------------- */
-#define GCHeader                                                               \
-    GCRef nextgc;                                                              \
-    uint8_t marked;                                                            \
+#define GCHeader                                                                                                       \
+    GCRef nextgc;                                                                                                      \
+    uint8_t marked;                                                                                                    \
     uint8_t gct
 
 typedef struct GCstr {
@@ -144,16 +143,7 @@ typedef struct GCproto {
 #define proto_bcpos(pt, pc) ((BCPos)((pc) - proto_bc(pt)))
 
 /* ---- frame type markers ----------------------------------------------- */
-enum {
-    FRAME_LUA,
-    FRAME_C,
-    FRAME_CONT,
-    FRAME_VARG,
-    FRAME_LUAP,
-    FRAME_CP,
-    FRAME_PCALL,
-    FRAME_PCALLH
-};
+enum { FRAME_LUA, FRAME_C, FRAME_CONT, FRAME_VARG, FRAME_LUAP, FRAME_CP, FRAME_PCALL, FRAME_PCALLH };
 #define FRAME_TYPE  3
 #define FRAME_P     4
 #define FRAME_TYPEP (FRAME_TYPE | FRAME_P)
@@ -211,12 +201,12 @@ static __always_inline ptrdiff_t frame_sized(cTValue *f)
 }
 
 /* ---- function (closure) ----------------------------------------------- */
-#define GCfuncHeader                                                           \
-    GCHeader;                                                                  \
-    uint8_t ffid;                                                              \
-    uint8_t nupvalues;                                                         \
-    GCRef env;                                                                 \
-    GCRef gclist;                                                              \
+#define GCfuncHeader                                                                                                   \
+    GCHeader;                                                                                                          \
+    uint8_t ffid;                                                                                                      \
+    uint8_t nupvalues;                                                                                                 \
+    GCRef env;                                                                                                         \
+    GCRef gclist;                                                                                                      \
     MRef pc
 
 typedef struct GCfuncC {

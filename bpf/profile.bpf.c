@@ -140,9 +140,8 @@ static __always_inline BCPos get_frame_pc(GCfunc *fn, cTValue *prev_frame)
 }
 
 /* emit one lua frame as its own perf event */
-static __always_inline void emit_lua(struct bpf_perf_event_data *ctx,
-                                     GCobj *gco, cTValue *prev_frame, u32 pid,
-                                     u32 tid, u32 seq, int level, bool jit_top)
+static __always_inline void emit_lua(struct bpf_perf_event_data *ctx, GCobj *gco, cTValue *prev_frame, u32 pid, u32 tid,
+                                     u32 seq, int level, bool jit_top)
 {
     GCfunc *fn = &gco->fn;
 
@@ -192,14 +191,12 @@ static __always_inline void emit_lua(struct bpf_perf_event_data *ctx,
         e->type = FUNC_TYPE_F;
         e->line = ffid;
     }
-    bpf_perf_event_output(ctx, &lua_events_out, BPF_F_CURRENT_CPU, e,
-                          sizeof(*e));
+    bpf_perf_event_output(ctx, &lua_events_out, BPF_F_CURRENT_CPU, e, sizeof(*e));
 }
 
 /* Walk the materialized Lua VM stack backwards, including an active JIT BASE.
  */
-static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
-                                           u32 tid, u32 pid, u32 seq)
+static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx, u32 tid, u32 pid, u32 seq)
 {
     struct lua_state_slot *slot = bpf_map_lookup_elem(&lua_states, &tid);
     if (!slot || !slot->ptr) {
@@ -219,14 +216,11 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
     if (valid_user_ptr(gptr)) {
         GCRef cur_L = {};
         MRef jit_base = {};
-        bpf_probe_read_user(&cur_L, sizeof(cur_L),
-                            (const void *)(gptr + LJ_G_OFS_CUR_L));
-        bpf_probe_read_user(&jit_base, sizeof(jit_base),
-                            (const void *)(gptr + LJ_G_OFS_JIT_BASE));
+        bpf_probe_read_user(&cur_L, sizeof(cur_L), (const void *)(gptr + LJ_G_OFS_CUR_L));
+        bpf_probe_read_user(&jit_base, sizeof(jit_base), (const void *)(gptr + LJ_G_OFS_JIT_BASE));
         uint64_t cur_L_ptr = gcrefu64(cur_L) & LJ_GCVMASK;
         uint64_t jit_base_ptr = mrefu64(jit_base);
-        if (cur_L_ptr == (uint64_t)L && jit_base_ptr > (uint64_t)bot &&
-            jit_base_ptr <= (uint64_t)maxstack) {
+        if (cur_L_ptr == (uint64_t)L && jit_base_ptr > (uint64_t)bot && jit_base_ptr <= (uint64_t)maxstack) {
             base_ptr = jit_base_ptr;
             on_jit_trace = true;
         }
@@ -257,8 +251,7 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
             if (gct != LJ_GCT_FUNC) {
                 break;
             }
-            emit_lua(ctx, gco, prev_frame, pid, tid, seq, out,
-                     on_jit_trace && out == 0);
+            emit_lua(ctx, gco, prev_frame, pid, tid, seq, out, on_jit_trace && out == 0);
             out++;
         } else if (!vararg && gct != LJ_GCT_THREAD) {
             break;
@@ -270,8 +263,7 @@ static __always_inline void walk_lua_stack(struct bpf_perf_event_data *ctx,
                 break;
             }
             BCIns prev_ins = 0;
-            bpf_probe_read_user(&prev_ins, sizeof(prev_ins),
-                                (void *)((char *)pc - sizeof(BCIns)));
+            bpf_probe_read_user(&prev_ins, sizeof(prev_ins), (void *)((char *)pc - sizeof(BCIns)));
             BCReg a = (prev_ins >> 8) & 0xff;
             cTValue *next = frame - (1 + LJ_FR2 + a);
             if (next >= frame || next < bot) {
@@ -304,10 +296,8 @@ static __always_inline u32 read_user_stack_snapshot(struct native_event *event)
     u32 bytes_read = 0;
 
 #pragma unroll
-    for (u32 offset = 0; offset < USER_STACK_SNAPSHOT_SIZE;
-         offset += USER_STACK_SNAPSHOT_CHUNK_SIZE) {
-        if (bpf_probe_read_user(event->stack + offset,
-                                USER_STACK_SNAPSHOT_CHUNK_SIZE,
+    for (u32 offset = 0; offset < USER_STACK_SNAPSHOT_SIZE; offset += USER_STACK_SNAPSHOT_CHUNK_SIZE) {
+        if (bpf_probe_read_user(event->stack + offset, USER_STACK_SNAPSHOT_CHUNK_SIZE,
                                 (const void *)(event->sp + offset)) != 0) {
             break;
         }
@@ -317,28 +307,22 @@ static __always_inline u32 read_user_stack_snapshot(struct native_event *event)
     /* A stack pointer can be less than one chunk below the mapping boundary.
      * Preserve a useful prefix instead of dropping the entire snapshot. */
     if (bytes_read == 0) {
-        if (bpf_probe_read_user(event->stack, 256, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 256, (const void *)event->sp) == 0) {
             return 256;
         }
-        if (bpf_probe_read_user(event->stack, 128, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 128, (const void *)event->sp) == 0) {
             return 128;
         }
-        if (bpf_probe_read_user(event->stack, 64, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 64, (const void *)event->sp) == 0) {
             return 64;
         }
-        if (bpf_probe_read_user(event->stack, 32, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 32, (const void *)event->sp) == 0) {
             return 32;
         }
-        if (bpf_probe_read_user(event->stack, 16, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 16, (const void *)event->sp) == 0) {
             return 16;
         }
-        if (bpf_probe_read_user(event->stack, 8, (const void *)event->sp) ==
-            0) {
+        if (bpf_probe_read_user(event->stack, 8, (const void *)event->sp) == 0) {
             return 8;
         }
     }
@@ -394,8 +378,7 @@ int do_perf_event(struct bpf_perf_event_data *ctx)
             ne->sp = 0;
             ne->fp = 0;
             ne->lr = 0;
-            long n =
-                bpf_get_stack(ctx, ne->ips, sizeof(ne->ips), BPF_F_USER_STACK);
+            long n = bpf_get_stack(ctx, ne->ips, sizeof(ne->ips), BPF_F_USER_STACK);
             ne->ip_cnt = n > 0 ? n / sizeof(u64) : 0;
             if (collect_native_stacks) {
                 ne->ip = PT_REGS_IP(&ctx->regs);
@@ -407,12 +390,10 @@ int do_perf_event(struct bpf_perf_event_data *ctx)
                 if (ne->sp) {
                     ne->stack_len = read_user_stack_snapshot(ne);
                 }
-                bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU,
-                                      ne, sizeof(*ne));
+                bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU, ne, sizeof(*ne));
             } else {
-                bpf_perf_event_output(
-                    ctx, &native_events, BPF_F_CURRENT_CPU, ne,
-                    __builtin_offsetof(struct native_event, stack));
+                bpf_perf_event_output(ctx, &native_events, BPF_F_CURRENT_CPU, ne,
+                                      __builtin_offsetof(struct native_event, stack));
             }
         }
     }
