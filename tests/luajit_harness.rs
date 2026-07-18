@@ -2,15 +2,28 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Set this to make a missing LuaJIT build a hard failure instead of a skip.
+/// CI sets it so a broken checkout can never silently disable this test.
+const REQUIRED_ENV: &str = "LUAJIT2_FLAME_RS_HARNESS_REQUIRED";
+
 #[test]
 fn harness_runs_against_local_luajit2() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let luajit_src = luajit_src_dir(repo);
-    let luajit_so = luajit_src.join("libluajit.so");
-    if !luajit_so.exists() {
-        eprintln!("skipping: {} does not exist", luajit_so.display());
+    let Some(luajit_src) = find_luajit_src(repo) else {
+        let msg = format!(
+            "LuaJIT harness test skipped: libluajit.so not found in any candidate location.\n\
+             Searched: $LUAJIT_SRC_DIR, deps/luajit2/src, <repo>/../luajit2/src.\n\
+             Build LuaJIT in one of those locations, or point $LUAJIT_SRC_DIR at a built \
+             luajit2/src directory.\n\
+             Set {REQUIRED_ENV}=1 to turn this skip into a failure."
+        );
+        if std::env::var_os(REQUIRED_ENV).is_some() {
+            panic!("{msg}");
+        }
+        eprintln!("{msg}");
         return;
-    }
+    };
+    let luajit_so = luajit_src.join("libluajit.so");
 
     let temp =
         std::env::temp_dir().join(format!("luajit2-flame-rs-harness-{}", std::process::id()));
@@ -60,20 +73,18 @@ fn harness_runs_against_local_luajit2() {
     let _ = std::fs::remove_dir_all(temp);
 }
 
-fn luajit_src_dir(repo: &Path) -> PathBuf {
-    if let Ok(path) = std::env::var("LUAJIT_SRC_DIR") {
-        return PathBuf::from(path);
+/// First directory containing a built `libluajit.so`, or `None` when no
+/// usable LuaJIT checkout exists on this machine.
+fn find_luajit_src(repo: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("LUAJIT_SRC_DIR") {
+        candidates.push(PathBuf::from(path));
     }
-    let deps = repo.join("deps/luajit2/src");
-    if deps.join("libluajit.so").exists() {
-        return deps;
+    candidates.push(repo.join("deps/luajit2/src"));
+    if let Some(parent) = repo.parent() {
+        candidates.push(parent.join("luajit2/src"));
     }
-    let sibling = repo
-        .parent()
-        .map(|parent| parent.join("luajit2/src"))
-        .unwrap_or_else(|| PathBuf::from("../luajit2/src"));
-    if sibling.join("libluajit.so").exists() {
-        return sibling;
-    }
-    PathBuf::from("/root/TEMP/luajit2/src")
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("libluajit.so").exists())
 }

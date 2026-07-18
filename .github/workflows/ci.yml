@@ -10,6 +10,8 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   LUAJIT_SRC_DIR: ${{ github.workspace }}/deps/luajit2/src
+  # The harness test must never silently skip in CI.
+  LUAJIT2_FLAME_RS_HARNESS_REQUIRED: "1"
 
 jobs:
   test:
