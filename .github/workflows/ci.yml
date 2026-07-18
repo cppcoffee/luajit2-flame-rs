@@ -102,10 +102,17 @@ jobs:
 
       - name: Build test harness
         run: |
+          mkdir -p /tmp/luajit-lib
+          cp deps/luajit2/src/libluajit.so /tmp/luajit-lib/libluajit.so
+          cp deps/luajit2/src/libluajit.so /tmp/luajit-lib/libluajit-5.1.so.2
           cc -O2 tests/harness.c -o /tmp/lua-harness \
             -I"$GITHUB_WORKSPACE/deps/luajit2/src" \
-            -L"$GITHUB_WORKSPACE/deps/luajit2/src" -lluajit -lm -ldl \
-            -Wl,-rpath="$GITHUB_WORKSPACE/deps/luajit2/src"
+            -L/tmp/luajit-lib -lluajit -lm -ldl \
+            -Wl,-rpath=/tmp/luajit-lib
+          ldd /tmp/lua-harness
+          LUAJIT2_FLAME_RS_HARNESS_ITERS=1 \
+            LUAJIT2_FLAME_RS_WORK_ITERS=10 \
+            /tmp/lua-harness "$GITHUB_WORKSPACE/tests/cpu-burn.lua"
 
       - name: Download profiler binary
         uses: actions/download-artifact@v4
