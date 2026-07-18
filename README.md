@@ -30,24 +30,47 @@ native LuaJIT frames are shown together with the Lua source frames.
 - Interleaves Lua frames with native C frames for mixed-stack analysis.
 - Writes folded stacks and an SVG flame graph.
 
-## Requirements
+## Runtime requirements
 
-`luajit2-flame-rs` currently targets Linux only.
+These requirements apply when running either a prebuilt release or a locally
+built binary. `luajit2-flame-rs` currently supports x86_64 and aarch64 Linux.
 
-Runtime requirements:
+- Linux kernel >= 5.13 with eBPF, uprobes, perf events, and BTF enabled. The
+  target kernel must expose readable BTF at `/sys/kernel/btf/vmlinux`.
+- `root` privileges are recommended. An unprivileged invocation instead needs
+  all capabilities and process-access permissions required by the host kernel
+  for eBPF, uprobes, perf events, and the target process.
+- `kernel.perf_event_paranoid <= 1`.
+- A running process with LuaJIT 2.x loaded.
 
-- Linux kernel >= 5.13 with BTF enabled (`CONFIG_DEBUG_INFO_BTF=y`)
-- `root` privileges, or equivalent capabilities for eBPF, uprobes, and perf events
-- `kernel.perf_event_paranoid <= 1`
-- A running process with LuaJIT loaded
+The release archives contain statically linked binaries, so Rust, Clang,
+`libbpf-dev`, and `libelf-dev` are not required on the machine that runs the
+profiler.
 
-Build requirements on Debian/Ubuntu:
+## Build requirements
+
+These requirements apply only when building from source. Source builds require
+Rust >= 1.77, Clang/LLVM for compiling the eBPF program, and the native C
+development toolchain used by `libbpf`.
+
+Install the build dependencies on Debian/Ubuntu with:
 
 ```sh
-sudo apt install clang libelf-dev libbpf-dev linux-tools-common
+sudo apt install build-essential clang llvm pkg-config \
+  autoconf automake autopoint bison flex gawk \
+  libelf-dev libbpf-dev zlib1g-dev
 ```
 
-Rust >= 1.77 is required.
+The checked-in `bpf/vmlinux.h` targets x86_64. Before building on aarch64,
+install `bpftool` and regenerate the header from the build machine's kernel:
+
+```sh
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h.tmp
+mv bpf/vmlinux.h.tmp bpf/vmlinux.h
+```
+
+`bpftool` is only needed to regenerate this architecture-specific build input;
+the profiler does not invoke it at runtime.
 
 ## Quick start
 
@@ -189,7 +212,6 @@ header if the runner does not expose a usable `bpftool`.
 - `L:` interpreter frames identify the sampled source line. `JIT:` frames identify
   the materialized Lua function running on a trace; optimized inline frames and the
   exact source line within a trace are not reconstructed.
-- `kernel.perf_event_paranoid` must be `<= 1` for sampling.
 - GC64 vs non-GC64 is selected at BPF compile time with `-DLJ_TARGET_GC64=1`
   by default for 64-bit OpenResty-style LuaJIT builds.
 - Standalone `luajit` usually drives execution through one `lua_pcall`; for a
