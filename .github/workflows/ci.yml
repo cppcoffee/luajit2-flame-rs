@@ -76,3 +76,106 @@ jobs:
           name: luajit2-flame-rs-${{ runner.os }}-${{ runner.arch }}
           path: target/release/luajit2-flame-rs
           if-no-files-found: error
+
+  e2e:
+    name: E2E smoke (sudo)
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - name: Checkout luajit2-flame-rs
+        uses: actions/checkout@v4
+
+      - name: Checkout LuaJIT2
+        uses: actions/checkout@v4
+        with:
+          repository: openresty/luajit2
+          path: deps/luajit2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+
+      - name: Build LuaJIT2
+        working-directory: deps/luajit2/src
+        run: make -j"$(nproc)"
+
+      - name: Build test harness
+        run: |
+          cc -O2 tests/harness.c -o /tmp/lua-harness \
+            -I"$GITHUB_WORKSPACE/deps/luajit2/src" \
+            -L"$GITHUB_WORKSPACE/deps/luajit2/src" -lluajit -lm -ldl \
+            -Wl,-rpath="$GITHUB_WORKSPACE/deps/luajit2/src"
+
+      - name: Download profiler binary
+        uses: actions/download-artifact@v4
+        with:
+          name: luajit2-flame-rs-${{ runner.os }}-${{ runner.arch }}
+          path: dist-bin
+
+      - name: Preflight kernel checks
+        run: |
+          uname -a
+          cat /proc/sys/kernel/perf_event_paranoid
+          sudo test -r /sys/kernel/btf/vmlinux
+          chmod +x dist-bin/luajit2-flame-rs
+
+      - name: Start interpreter workload
+        run: |
+          /tmp/lua-harness "$GITHUB_WORKSPACE/tests/cpu-burn.lua" > /tmp/harness.log 2>&1 &
+          echo "HPID=$!" >> "$GITHUB_ENV"
+
+      - name: Profile Lua frames
+        run: |
+          sleep 1
+          sudo ./dist-bin/luajit2-flame-rs -p "$HPID" -d 5 -o folded.txt 2>&1 | tee /tmp/lua-only.log
+
+      - name: Verify Lua-only output
+        run: |
+          test -s folded.txt
+          test -s folded.svg
+          grep -q 'L:.*cpu-burn' folded.txt
+
+      - name: Profile mixed C + Lua frames
+        run: sudo ./dist-bin/luajit2-flame-rs -p "$HPID" --include-c-stacks -d 5 -o mixed.txt 2>&1 | tee /tmp/mixed.log
+
+      - name: Verify mixed output
+        run: |
+          test -s mixed.txt
+          test -s mixed.svg
+          grep -q 'L:.*cpu-burn' mixed.txt
+          grep -q 'user-space DWARF unwind' /tmp/mixed.log
+
+      - name: Profile native-only frames
+        run: sudo ./dist-bin/luajit2-flame-rs -p "$HPID" --disable-lua -d 5 -o native.txt 2>&1 | tee /tmp/native.log
+
+      - name: Verify native-only output
+        run: |
+          test -s native.txt
+          test -s native.svg
+          ! grep -q 'L:' native.txt
+
+      - name: Restart workload with JIT enabled
+        run: |
+          kill "$HPID" 2>/dev/null || true
+          LUAJIT2_FLAME_RS_JIT=1 /tmp/lua-harness "$GITHUB_WORKSPACE/tests/cpu-burn.lua" > /tmp/harness-jit.log 2>&1 &
+          echo "HPID=$!" >> "$GITHUB_ENV"
+          sleep 3
+
+      - name: Profile JIT traces
+        run: sudo ./dist-bin/luajit2-flame-rs -p "$HPID" -d 8 -o jit.txt 2>&1 | tee /tmp/jit.log
+
+      - name: Verify JIT output
+        run: |
+          test -s jit.txt
+          test -s jit.svg
+          grep -q 'JIT:' jit.txt
+
+      - name: Stop workload
+        if: always()
+        run: |
+          kill "$HPID" 2>/dev/null || true
+          echo '--- harness.log ---'
+          cat /tmp/harness.log 2>/dev/null || true
+          echo '--- harness-jit.log ---'
+          cat /tmp/harness-jit.log 2>/dev/null || true
