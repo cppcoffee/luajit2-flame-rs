@@ -128,13 +128,30 @@ jobs:
       - name: Profile Lua frames
         run: |
           sleep 1
+          if ! kill -0 "$HPID" 2>/dev/null; then
+            echo "::error::LuaJIT workload exited before profiling"
+            cat /tmp/harness.log
+            exit 1
+          fi
           sudo ./dist-bin/luajit2-flame-rs -p "$HPID" -d 5 -o folded.txt 2>&1 | tee /tmp/lua-only.log
 
       - name: Verify Lua-only output
         run: |
-          test -s folded.txt
-          test -s folded.svg
-          grep -q 'L:.*cpu-burn' folded.txt
+          ls -l folded.txt folded.svg || true
+          echo '--- folded.txt ---'
+          cat folded.txt 2>/dev/null || true
+          if ! test -s folded.txt; then
+            echo "::error::folded.txt is missing or empty"
+            exit 1
+          fi
+          if ! test -s folded.svg; then
+            echo "::error::folded.svg is missing or empty"
+            exit 1
+          fi
+          if ! grep -q 'L:.*cpu-burn' folded.txt; then
+            echo "::error::folded.txt contains no cpu-burn Lua frame"
+            exit 1
+          fi
 
       - name: Profile mixed C + Lua frames
         run: sudo ./dist-bin/luajit2-flame-rs -p "$HPID" --include-c-stacks -d 5 -o mixed.txt 2>&1 | tee /tmp/mixed.log
@@ -170,6 +187,28 @@ jobs:
           test -s jit.txt
           test -s jit.svg
           grep -q 'JIT:' jit.txt
+
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics-${{ github.run_attempt }}
+          path: |
+            folded.txt
+            folded.svg
+            mixed.txt
+            mixed.svg
+            native.txt
+            native.svg
+            jit.txt
+            jit.svg
+            /tmp/lua-only.log
+            /tmp/mixed.log
+            /tmp/native.log
+            /tmp/jit.log
+            /tmp/harness.log
+            /tmp/harness-jit.log
+          if-no-files-found: warn
 
       - name: Stop workload
         if: always()
