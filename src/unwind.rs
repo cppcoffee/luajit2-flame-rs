@@ -4,8 +4,9 @@ use framehop::{
     CacheNative, ExplicitModuleSectionInfo, MayAllocateDuringUnwind, Module, UnwindRegsNative,
     Unwinder, UnwinderNative,
 };
-use goblin::elf::program_header::{ProgramHeader, PT_LOAD};
-use object::{Object, ObjectSection};
+use object::read::{ObjectSection, ObjectSegment};
+use object::File as ElfFile;
+use object::Object;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
@@ -76,35 +77,28 @@ impl UserUnwinder {
             let Some(bytes) = read_mapped_file(pid, first, &mappings) else {
                 continue;
             };
-            let Ok(elf) = goblin::elf::Elf::parse(&bytes) else {
+            let Ok(elf) = ElfFile::parse(bytes.as_slice()) else {
                 continue;
             };
-            let Ok(object) = object::File::parse(bytes.as_slice()) else {
-                continue;
-            };
-            if !is_native_architecture(object.architecture()) {
+            if !is_native_architecture(elf.architecture()) {
                 continue;
             }
 
             let load_biases: HashSet<u64> = mappings
                 .iter()
-                .filter_map(|mapping| {
-                    load_bias_for_mapping(mapping, &elf.program_headers, page_size)
-                })
+                .filter_map(|mapping| load_bias_for_mapping(mapping, &elf, page_size))
                 .collect();
             if load_biases.is_empty() {
                 continue;
             }
 
-            let sections = module_sections(&object);
+            let sections = module_sections(&elf);
             if sections.eh_frame.is_none() && sections.debug_frame.is_none() {
                 continue;
             }
 
             for load_bias in load_biases {
-                let Some(avma_range) =
-                    module_avma_range(load_bias, &elf.program_headers, page_size)
-                else {
+                let Some(avma_range) = module_avma_range(load_bias, &elf, page_size) else {
                     continue;
                 };
                 unwinder.add_module(Module::new(
@@ -291,37 +285,33 @@ fn align_up(value: u64, alignment: u64) -> Option<u64> {
         .map(|value| align_down(value, alignment))
 }
 
-fn load_bias_for_mapping(
-    mapping: &MapEntry,
-    program_headers: &[ProgramHeader],
-    page_size: u64,
-) -> Option<u64> {
-    program_headers
-        .iter()
-        .filter(|header| header.p_type == PT_LOAD)
-        .find_map(|header| {
-            if align_down(header.p_offset, page_size) != mapping.offset {
-                return None;
-            }
-            mapping
-                .start
-                .checked_sub(align_down(header.p_vaddr, page_size))
-        })
+fn load_bias_for_mapping(mapping: &MapEntry, elf: &ElfFile<'_>, page_size: u64) -> Option<u64> {
+    elf.segments().find_map(|seg| {
+        let (p_offset, _) = seg.file_range();
+        load_bias_for_segment(mapping, p_offset, seg.address(), page_size)
+    })
 }
 
-fn module_avma_range(
-    load_bias: u64,
-    program_headers: &[ProgramHeader],
+fn load_bias_for_segment(
+    mapping: &MapEntry,
+    p_offset: u64,
+    p_vaddr: u64,
     page_size: u64,
-) -> Option<Range<u64>> {
+) -> Option<u64> {
+    if align_down(p_offset, page_size) != mapping.offset {
+        return None;
+    }
+    mapping.start.checked_sub(align_down(p_vaddr, page_size))
+}
+
+fn module_avma_range(load_bias: u64, elf: &ElfFile<'_>, page_size: u64) -> Option<Range<u64>> {
     let mut start = u64::MAX;
     let mut end = 0;
-    for header in program_headers
-        .iter()
-        .filter(|header| header.p_type == PT_LOAD)
-    {
-        start = start.min(align_down(header.p_vaddr, page_size));
-        let segment_end = align_up(header.p_vaddr.checked_add(header.p_memsz)?, page_size)?;
+    for seg in elf.segments() {
+        let p_vaddr = seg.address();
+        let p_memsz = seg.size();
+        start = start.min(align_down(p_vaddr, page_size));
+        let segment_end = align_up(p_vaddr.checked_add(p_memsz)?, page_size)?;
         end = end.max(segment_end);
     }
     if start >= end {
@@ -330,32 +320,32 @@ fn module_avma_range(
     Some(load_bias.checked_add(start)?..load_bias.checked_add(end)?)
 }
 
-fn module_sections(object: &object::File<'_>) -> ExplicitModuleSectionInfo<Vec<u8>> {
-    let text_svma = section_range(object, ".text");
-    let got_svma = section_range(object, ".got");
-    let eh_frame_svma = section_range(object, ".eh_frame");
-    let eh_frame_hdr_svma = section_range(object, ".eh_frame_hdr");
+fn module_sections(elf: &ElfFile<'_>) -> ExplicitModuleSectionInfo<Vec<u8>> {
+    let text_svma = section_range(elf, ".text");
+    let got_svma = section_range(elf, ".got");
+    let eh_frame_svma = section_range(elf, ".eh_frame");
+    let eh_frame_hdr_svma = section_range(elf, ".eh_frame_hdr");
     ExplicitModuleSectionInfo {
         base_svma: 0,
         text_svma,
         got_svma,
-        eh_frame: section_data(object, ".eh_frame", false),
+        eh_frame: section_data(elf, ".eh_frame", false),
         eh_frame_svma,
-        eh_frame_hdr: section_data(object, ".eh_frame_hdr", false),
+        eh_frame_hdr: section_data(elf, ".eh_frame_hdr", false),
         eh_frame_hdr_svma,
-        debug_frame: section_data(object, ".debug_frame", true),
+        debug_frame: section_data(elf, ".debug_frame", true),
         ..Default::default()
     }
 }
 
-fn section_range(object: &object::File<'_>, name: &str) -> Option<Range<u64>> {
-    let section = object.section_by_name(name)?;
+fn section_range(elf: &ElfFile<'_>, name: &str) -> Option<Range<u64>> {
+    let section = elf.section_by_name(name)?;
     let end = section.address().checked_add(section.size())?;
     Some(section.address()..end)
 }
 
-fn section_data(object: &object::File<'_>, name: &str, decompress: bool) -> Option<Vec<u8>> {
-    let section = object.section_by_name(name)?;
+fn section_data(elf: &ElfFile<'_>, name: &str, decompress: bool) -> Option<Vec<u8>> {
+    let section = elf.section_by_name(name)?;
     if decompress {
         section
             .uncompressed_data()
@@ -432,10 +422,9 @@ mod tests {
     #[test]
     fn calculates_pie_load_bias() {
         let mapping = map_entry(0x7f00_1000, 0x1000);
-        let header = load_header(0x1000, 0x1000, 0x2000);
 
         assert_eq!(
-            load_bias_for_mapping(&mapping, &[header], 4096),
+            load_bias_for_segment(&mapping, 0x1000, 0x1000, 4096),
             Some(0x7f00_0000)
         );
     }
@@ -443,9 +432,11 @@ mod tests {
     #[test]
     fn calculates_exec_load_bias_without_subtracting_file_offset() {
         let mapping = map_entry(0x401000, 0x1000);
-        let header = load_header(0x1000, 0x401000, 0x2000);
 
-        assert_eq!(load_bias_for_mapping(&mapping, &[header], 4096), Some(0));
+        assert_eq!(
+            load_bias_for_segment(&mapping, 0x1000, 0x401000, 4096),
+            Some(0)
+        );
     }
 
     #[test]
@@ -470,13 +461,5 @@ mod tests {
             inode: 1,
             path: Some("/tmp/app".to_string()),
         }
-    }
-
-    fn load_header(offset: u64, vaddr: u64, memsz: u64) -> ProgramHeader {
-        let mut header = ProgramHeader::new();
-        header.p_offset = offset;
-        header.p_vaddr = vaddr;
-        header.p_memsz = memsz;
-        header
     }
 }

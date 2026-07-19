@@ -14,7 +14,6 @@ path = "src/main.rs"
 libbpf-rs    = { version = "0.24", features = ["vendored"] }
 libc         = "0.2"
 clap         = { version = "4.5", features = ["derive"] }
-goblin       = { version = "0.9", default-features = false, features = ["elf32", "elf64", "endian_fd", "alloc", "std"] }
 blazesym     = "0.2"
 inferno      = { version = "0.11", default-features = false }
 anyhow       = "1"

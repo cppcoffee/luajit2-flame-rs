@@ -3,9 +3,8 @@
 //! `lua_yield`).
 
 use anyhow::{anyhow, Result};
-use goblin::elf::program_header::{PF_X, PT_LOAD};
-use goblin::elf::sym::STT_FUNC;
-use goblin::elf::Elf;
+use object::read::ObjectSymbol;
+use object::{Object, ObjectSegment, SegmentFlags, SymbolKind};
 use std::fs;
 use std::path::PathBuf;
 
@@ -15,7 +14,6 @@ use std::path::PathBuf;
 pub fn find_luajit(pid: i32) -> Result<(PathBuf, u64)> {
     let maps = fs::read_to_string(format!("/proc/{pid}/maps"))?;
     for line in maps.lines() {
-        // format: address perms offset dev inode  pathname
         let mut it = line.split_whitespace();
         let range = it.next().unwrap_or("");
         let _perms = it.next();
@@ -49,30 +47,19 @@ pub struct LuaOffsets {
 /// file, so convert symbol vaddrs through the executable PT_LOAD segment.
 pub fn resolve_lua_offsets(lib_path: &PathBuf) -> Result<LuaOffsets> {
     let bytes = fs::read(lib_path)?;
-    let elf = Elf::parse(&bytes)?;
+    let elf = object::File::parse(bytes.as_slice())?;
 
     let want = ["lua_resume", "lua_pcall", "lua_yield"];
     let mut found = [None; 3];
-    for (name, value, typ) in elf
-        .syms
-        .iter()
-        .filter_map(|sym| {
-            elf.strtab
-                .get_at(sym.st_name)
-                .map(|name| (name, sym.st_value, sym.st_type()))
-        })
-        .chain(elf.dynsyms.iter().filter_map(|sym| {
-            elf.dynstrtab
-                .get_at(sym.st_name)
-                .map(|name| (name, sym.st_value, sym.st_type()))
-        }))
-    {
-        if typ != STT_FUNC {
+    for sym in elf.symbols().chain(elf.dynamic_symbols()) {
+        if sym.kind() != SymbolKind::Text {
             continue;
         }
+        let Ok(name) = sym.name_bytes() else { continue };
+        let vaddr = sym.address();
         for (i, w) in want.iter().enumerate() {
-            if name == *w {
-                found[i] = Some(vaddr_to_file_offset(&elf, value)?);
+            if name == w.as_bytes() {
+                found[i] = Some(vaddr_to_file_offset(&elf, vaddr)?);
             }
         }
     }
@@ -86,14 +73,18 @@ pub fn resolve_lua_offsets(lib_path: &PathBuf) -> Result<LuaOffsets> {
     })
 }
 
-fn vaddr_to_file_offset(elf: &Elf<'_>, vaddr: u64) -> Result<u64> {
-    for ph in &elf.program_headers {
-        if ph.p_type == PT_LOAD
-            && (ph.p_flags & PF_X) != 0
-            && ph.p_vaddr <= vaddr
-            && vaddr < ph.p_vaddr.saturating_add(ph.p_memsz)
-        {
-            return Ok(vaddr - ph.p_vaddr + ph.p_offset);
+fn vaddr_to_file_offset(elf: &object::File<'_>, vaddr: u64) -> Result<u64> {
+    const PF_X: u32 = 1;
+    // ObjectSegment only iterates PT_LOAD segments, so no p_type check needed.
+    for seg in elf.segments() {
+        let SegmentFlags::Elf { p_flags } = seg.flags() else {
+            continue;
+        };
+        let p_vaddr = seg.address();
+        let p_memsz = seg.size();
+        if (p_flags & PF_X) != 0 && p_vaddr <= vaddr && vaddr < p_vaddr.saturating_add(p_memsz) {
+            let (p_offset, _) = seg.file_range();
+            return Ok(vaddr - p_vaddr + p_offset);
         }
     }
     Err(anyhow!(
