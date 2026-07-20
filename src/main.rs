@@ -73,7 +73,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let include_native_stacks = args.include_c_stacks || args.disable_lua;
 
-    let (lib_path, _base) = syms::find_luajit(args.pid)
+    let lib_path = syms::find_luajit(args.pid)
         .with_context(|| format!("locating luajit for pid {}", args.pid))?;
     let offs = syms::resolve_lua_offsets(&lib_path)
         .with_context(|| format!("resolving symbols in {}", lib_path.display()))?;

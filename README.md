@@ -39,7 +39,7 @@ Before running the profiler, the target machine must provide:
 - Linux kernel >= 5.13 with eBPF, uprobes, perf events, and BTF enabled.
 - Readable kernel BTF at `/sys/kernel/btf/vmlinux`.
 - `kernel.perf_event_paranoid <= 1`.
-- A running process with LuaJIT 2.x loaded.
+- A running process with LuaJIT 2.x loaded dynamically or linked statically.
 - `root` privileges, or the equivalent eBPF, perf-event, uprobe, and
   process-access permissions required by the host kernel.
 
@@ -145,6 +145,8 @@ stack, that sample falls back to the native IPs collected by `bpf_get_stack()`.
 
 Lua frames do not depend on DWARF. The eBPF stack walker reads LuaJIT runtime
 metadata directly to recover Lua source files, lines, and active JIT functions.
+For statically linked targets, the main executable must retain the `lua_resume`,
+`lua_pcall`, and `lua_yield` symbols used to place uprobes.
 
 ## Usage reference
 

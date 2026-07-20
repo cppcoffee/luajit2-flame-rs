@@ -1,37 +1,31 @@
-//! Locate the LuaJIT shared library backing a target PID, and resolve the
-//! file offsets of the entry points we uprobe (`lua_resume`, `lua_pcall`,
+//! Locate the ELF containing LuaJIT for a target PID, and resolve the file
+//! offsets of the entry points we uprobe (`lua_resume`, `lua_pcall`,
 //! `lua_yield`).
 
 use anyhow::{anyhow, Result};
 use object::read::ObjectSymbol;
 use object::{Object, ObjectSegment, SegmentFlags, SymbolKind};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Parse `/proc/<pid>/maps` and find the first mapping whose path contains
-/// `luajit` (covers both `libluajit-5.1.so` and a statically-linked
-/// `luajit` binary). Returns (lib_path, load_base_address).
-pub fn find_luajit(pid: i32) -> Result<(PathBuf, u64)> {
+/// Find the ELF that contains LuaJIT. Statically linked programs keep the
+/// required symbols in their main executable; dynamically linked programs
+/// expose them from a `luajit` mapping.
+pub fn find_luajit(pid: i32) -> Result<PathBuf> {
+    let executable = PathBuf::from(format!("/proc/{pid}/exe"));
+    if resolve_lua_offsets(&executable).is_ok() {
+        return Ok(executable);
+    }
+
     let maps = fs::read_to_string(format!("/proc/{pid}/maps"))?;
     for line in maps.lines() {
-        let mut it = line.split_whitespace();
-        let range = it.next().unwrap_or("");
-        let _perms = it.next();
-        let _offset = it.next();
-        let _dev = it.next();
-        let _inode = it.next();
-        let path = it.next().unwrap_or("");
+        let path = line.split_ascii_whitespace().nth(5).unwrap_or("");
         if path.to_lowercase().contains("luajit") {
-            let base = range
-                .split('-')
-                .next()
-                .ok_or_else(|| anyhow!("bad address range"))?;
-            let base = u64::from_str_radix(base, 16)?;
-            return Ok((PathBuf::from(path), base));
+            return Ok(PathBuf::from(path));
         }
     }
     Err(anyhow!(
-        "no luajit mapping found in /proc/{pid}/maps (is the target a LuaJIT process?)"
+        "no LuaJIT symbols found in /proc/{pid}/exe or its shared-library mappings"
     ))
 }
 
@@ -45,14 +39,14 @@ pub struct LuaOffsets {
 /// Resolve `lua_resume`, `lua_pcall`, `lua_yield` symbol *file offsets*
 /// (not virtual addresses). uprobe attachment wants the offset within the ELF
 /// file, so convert symbol vaddrs through the executable PT_LOAD segment.
-pub fn resolve_lua_offsets(lib_path: &PathBuf) -> Result<LuaOffsets> {
+pub fn resolve_lua_offsets(lib_path: &Path) -> Result<LuaOffsets> {
     let bytes = fs::read(lib_path)?;
     let elf = object::File::parse(bytes.as_slice())?;
 
     let want = ["lua_resume", "lua_pcall", "lua_yield"];
     let mut found = [None; 3];
     for sym in elf.symbols().chain(elf.dynamic_symbols()) {
-        if sym.kind() != SymbolKind::Text {
+        if sym.kind() != SymbolKind::Text || !sym.is_definition() {
             continue;
         }
         let Ok(name) = sym.name_bytes() else { continue };
