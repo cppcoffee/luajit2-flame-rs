@@ -13,6 +13,14 @@
  */
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
+#if defined(__TARGET_ARCH_arm64)
+struct user_pt_regs {
+    unsigned long long regs[31];
+    unsigned long long sp;
+    unsigned long long pc;
+    unsigned long long pstate;
+};
+#endif
 #include <bpf/bpf_tracing.h>
 
 #include "lua_state.h"
