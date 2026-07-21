@@ -38,16 +38,17 @@ fn main() {
                 std::fs::write(&regenerated, &out.stdout).expect("writing regenerated vmlinux.h");
                 clang_includes.push(format!("-I{}", out_dir));
             }
-            Ok(out) => panic!(
-                "bpftool failed to dump /sys/kernel/btf/vmlinux (status {}): {}{}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr),
-                String::from_utf8_lossy(&out.stdout),
-            ),
-            Err(_) => panic!(
-                "bpftool not found; install linux-tools-common (or linux-tools-generic) \
-                 so vmlinux.h can be regenerated for the {target_arch} BPF build"
-            ),
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                println!(
+                    "cargo:warning=bpftool failed to dump /sys/kernel/btf/vmlinux (status {}): {}{}; using checked-in bpf/vmlinux.h",
+                    out.status, stderr, stdout
+                );
+            }
+            Err(e) => {
+                println!("cargo:warning=bpftool unavailable ({e}); using checked-in bpf/vmlinux.h")
+            }
         }
     }
     clang_includes.push(format!("-I/usr/include/{multiarch_include}"));

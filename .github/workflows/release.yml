@@ -61,6 +61,20 @@ jobs:
             sudo apt-get install -y --no-install-recommends linux-tools-generic || \
             echo "::warning::bpftool package install failed; using checked-in bpf/vmlinux.h"
 
+      - name: Select working bpftool
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          for candidate in /usr/lib/linux-tools*/bpftool /usr/sbin/bpftool /usr/bin/bpftool; do
+            if [ -x "$candidate" ] && "$candidate" version >/dev/null 2>&1; then
+              ln -sf "$candidate" "$RUNNER_TEMP/bin/bpftool"
+              echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          done
+          echo "::warning::no working bpftool found; build.rs may use checked-in bpf/vmlinux.h"
+
       - name: Prepare musl argp shim
         run: |
           set -euo pipefail
